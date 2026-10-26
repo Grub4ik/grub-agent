@@ -1,0 +1,7 @@
+faster-whisper
+sounddevice
+numpy
+scipy
+pynput
+nvidia-cublas-cu12
+nvidia-cudnn-cu12>=9,<10
