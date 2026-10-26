@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 
@@ -10,7 +11,9 @@ from grub.audio import AudioCapture, AudioError
 from grub.assistant import SYSTEM_PROMPT, VoiceAssistant
 from grub.feedback import FeedbackManager
 from grub.llm import OllamaClient, OllamaError
+from grub.playback import AudioPlayback
 from grub.stt import STTError, WhisperSTT, configure_cuda_library_path
+from grub.tts import SUPPORTED_VOICES, SpeechSynthesizer
 
 
 def _int_env(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -21,8 +24,27 @@ def _int_env(name: str, default: int, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, value))
 
 
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Local Grub voice assistant")
+    parser.add_argument("--no-tts", action="store_true", help="disable speech synthesis")
+    parser.add_argument(
+        "--voice",
+        choices=SUPPORTED_VOICES,
+        default=os.environ.get("GRUB_TTS_VOICE", "aidar"),
+    )
+    parser.add_argument(
+        "--playback-device",
+        type=int,
+        default=None,
+        help="sounddevice output device index",
+    )
+    parser.add_argument("--tts-volume", type=float, default=None, help="speech volume from 0.0 to 1.0")
+    return parser
+
+
 def main() -> int:
     try:
+        args = _parser().parse_args()
         configure_cuda_library_path()
 
         audio_device_value = os.environ.get("GRUB_AUDIO_DEVICE", "").strip()
@@ -36,6 +58,20 @@ def main() -> int:
             feedback_device = int(feedback_device_value) if feedback_device_value else None
         except ValueError as exc:
             raise AudioError("GRUB_FEEDBACK_DEVICE must be an output device number.") from exc
+
+        playback_device = args.playback_device
+        if playback_device is None:
+            playback_device_value = os.environ.get("GRUB_PLAYBACK_DEVICE", "").strip()
+            try:
+                playback_device = int(playback_device_value) if playback_device_value else None
+            except ValueError as exc:
+                raise AudioError("GRUB_PLAYBACK_DEVICE must be an output device number.") from exc
+
+        tts_volume = args.tts_volume
+        if tts_volume is None:
+            tts_volume = float(os.environ.get("GRUB_TTS_VOLUME", "1.0"))
+        if not 0.0 <= tts_volume <= 1.0:
+            raise ValueError("TTS volume must be between 0.0 and 1.0.")
 
         audio = AudioCapture(device=audio_device)
         stt = WhisperSTT(
@@ -56,8 +92,10 @@ def main() -> int:
             volume=float(os.environ.get("GRUB_BEEP_VOLUME", "0.12")),
             output_device=feedback_device,
         )
+        tts = None if args.no_tts else SpeechSynthesizer(voice=args.voice, device="cpu")
+        playback = AudioPlayback(device=playback_device, volume=tts_volume)
         try:
-            VoiceAssistant(audio, stt, llm, feedback).run()
+            VoiceAssistant(audio, stt, llm, feedback, tts, playback).run()
         finally:
             llm.close()
         return 0
