@@ -1,30 +1,30 @@
 # Grub Agent
 
-Локальный голосовой ассистент для Linux. Grub записывает речь с микрофона, распознаёт её через `faster-whisper`, отправляет текст локальной модели Ollama и показывает ответ в терминале.
+A local voice assistant for Linux. Grub captures speech from a microphone, transcribes it with `faster-whisper`, sends the text to a local Ollama model, and displays the reply in the terminal.
 
 > A modular, local-first AI voice assistant for Linux, powered by local LLMs, speech recognition, and custom tools.
 
-## Возможности v0.1
+## v0.1 features
 
-- Push-to-talk: удерживайте F8, чтобы говорить, и отпустите для распознавания.
-- Резервный режим терминала: Enter начинает запись, следующий Enter останавливает её.
-- Faster-whisper загружается один раз и повторно используется в течение запуска.
-- Ollama вызывается через локальный HTTP API; история диалога ограничена числом ходов.
-- Thinking выключен в запросах Ollama, чтобы в терминал попадал только ответ.
-- Выводятся время распознавания, время ответа LLM и суммарная задержка обработки.
-- Ошибка отдельной записи или запроса не завершает цикл ассистента.
+- Push-to-talk: hold F8 to speak and release it to transcribe.
+- Terminal fallback: press Enter to start recording and press Enter again to stop.
+- `faster-whisper` is loaded once and reused for the lifetime of the process.
+- Ollama is called through its local HTTP API; conversation history is bounded by a configurable number of turns.
+- Thinking output is disabled in Ollama requests so only the final answer is shown.
+- Transcription time, LLM response time, and total processing latency are displayed.
+- A failed recording or request does not terminate the assistant loop.
 
-## Требования
+## Requirements
 
-- Linux Mint, Python 3.10 или новее (разработка ориентирована на Python 3.12).
-- Ollama и загруженная модель `gemma4:12b`.
-- Микрофон, доступный через PortAudio.
-- NVIDIA GPU и совместимые CUDA/cuDNN runtime-библиотеки для faster-whisper на GPU.
-- Интернет при первой загрузке Whisper-модели; после кэширования распознавание работает локально.
+- Linux Mint and Python 3.10 or newer (developed with Python 3.12).
+- Ollama and the `gemma4:12b` model.
+- A microphone accessible through PortAudio.
+- An NVIDIA GPU with compatible CUDA/cuDNN runtime libraries for GPU-based `faster-whisper` inference.
+- Internet access for the first Whisper model download. Transcription runs locally after the model is cached.
 
-F8 перехватывается через `pynput` без root-доступа. На X11 это обычно работает напрямую. Wayland может ограничивать глобальные клавиши; тогда Grub переключится на Enter-режим.
+F8 is handled by `pynput` without root access. It usually works directly on X11. Wayland may restrict global key capture; in that case, Grub falls back to terminal Enter controls.
 
-## Установка
+## Installation
 
 ```bash
 cd ~/Projects/grub-agent
@@ -35,71 +35,68 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-Перед первым запуском убедитесь, что Ollama запущена и модель доступна:
+Make sure Ollama is running and the model is available:
 
 ```bash
 ollama pull gemma4:12b
 ollama list
 ```
 
-Команда `ollama pull` нужна только если модель ещё не загружена. Whisper `small` скачивается faster-whisper при первом запуске и сохраняется в его локальном кэше.
+Run `ollama pull` only if the model has not already been downloaded. On its first run, `faster-whisper` downloads the `small` model and stores it in its local cache.
 
-## Запуск
+## Run
 
-Из корня проекта:
+From the project root:
 
 ```bash
 source .venv/bin/activate
 python main.py
 ```
 
-Когда появится сообщение о готовности, удерживайте F8, произнесите фразу и отпустите клавишу. Нажмите Ctrl+C для выхода. Если F8 недоступна, следуйте подсказкам Enter-режима.
+When Grub reports that it is ready, hold F8, speak, and release the key. Press Ctrl+C to exit. If F8 is unavailable, follow the Enter-mode prompts.
 
-Список устройств ввода можно посмотреть так:
+List available input devices with:
 
 ```bash
 python -c 'import sounddevice as sd; print(sd.query_devices())'
 ```
 
-Чтобы выбрать устройство, задайте его номер:
+Select a device by its listed index:
 
 ```bash
 GRUB_AUDIO_DEVICE=2 python main.py
 ```
 
-## Настройки через переменные окружения
+## Environment variables
 
-| Переменная | По умолчанию | Назначение |
+| Variable | Default | Description |
 |---|---|---|
-| `GRUB_MODEL` | `gemma4:12b` | Имя модели Ollama |
-| `GRUB_OLLAMA_URL` | `http://localhost:11434` | Адрес локального API Ollama |
-| `GRUB_OLLAMA_TIMEOUT` | `120` | Тайм-аут запроса в секундах |
-| `GRUB_OLLAMA_KEEP_ALIVE` | `10m` | Как долго Ollama оставляет модель загруженной после запроса |
-| `GRUB_HISTORY_TURNS` | `10` | Число сохранённых пар user/assistant |
-| `GRUB_STT_MODEL` | `small` | Модель faster-whisper |
-| `GRUB_STT_DEVICE` | `cuda` | Устройство faster-whisper: `cuda` или `cpu` |
-| `GRUB_STT_COMPUTE_TYPE` | `float16` | Тип вычислений faster-whisper |
-| `GRUB_STT_LANGUAGE` | `ru` | Язык речи; значение `auto` включает автоопределение |
-| `GRUB_AUDIO_DEVICE` | системный ввод | Номер микрофона из списка sounddevice |
+| `GRUB_MODEL` | `gemma4:12b` | Ollama model name |
+| `GRUB_OLLAMA_URL` | `http://localhost:11434` | Local Ollama API URL |
+| `GRUB_OLLAMA_TIMEOUT` | `120` | Request timeout in seconds |
+| `GRUB_OLLAMA_KEEP_ALIVE` | `10m` | How long Ollama keeps the model loaded after a request |
+| `GRUB_HISTORY_TURNS` | `10` | Number of user/assistant message pairs to retain |
+| `GRUB_STT_MODEL` | `small` | `faster-whisper` model |
+| `GRUB_STT_DEVICE` | `cuda` | `faster-whisper` device: `cuda` or `cpu` |
+| `GRUB_STT_COMPUTE_TYPE` | `float16` | `faster-whisper` compute type |
+| `GRUB_STT_LANGUAGE` | `ru` | Speech language; set to `auto` for automatic detection |
+| `GRUB_AUDIO_DEVICE` | System default | Input device index from sounddevice |
 
-Whisper и Gemma используют одну видеопамять. Если совместная загрузка вызывает ошибку CUDA или Ollama переносит часть LLM в системную память, попробуйте запускать распознавание на CPU:
+Whisper and Gemma share GPU memory. If loading both causes a CUDA error or Ollama offloads part of the LLM to system memory, run speech recognition on the CPU:
 
 ```bash
 GRUB_STT_DEVICE=cpu GRUB_STT_COMPUTE_TYPE=int8 python main.py
 ```
 
-Автоматического управления памятью GPU пока нет. Переход STT на CPU может увеличить время распознавания.
+Automatic GPU memory management is not implemented. Moving STT to the CPU may increase transcription time.
 
-## Проверки
-
-Unit-тесты не требуют микрофона, Ollama или загрузки моделей:
+## Syntax check
 
 ```bash
-python -m unittest discover -s tests -v
-python -m compileall -q main.py grub tests
+python -m compileall -q main.py grub
 ```
 
-## Структура проекта
+## Project structure
 
 ```text
 grub-agent/
@@ -109,9 +106,6 @@ grub-agent/
 │   ├── audio.py
 │   ├── llm.py
 │   └── stt.py
-├── tests/
-│   ├── test_assistant.py
-│   └── test_llm.py
 ├── .gitignore
 ├── LICENSE
 ├── main.py
@@ -119,14 +113,14 @@ grub-agent/
 └── requirements.txt
 ```
 
-## Технологии
+## Technologies
 
-- Python — основной язык.
-- sounddevice и NumPy — запись и хранение аудиобуферов в памяти.
-- faster-whisper / CTranslate2 — локальное распознавание речи.
-- Ollama HTTP API — локальный чат с LLM.
-- pynput — F8 push-to-talk там, где это разрешает графическая сессия.
+- Python — application language.
+- sounddevice and NumPy — microphone capture and in-memory audio buffers.
+- faster-whisper / CTranslate2 — local speech recognition.
+- Ollama HTTP API — local LLM chat.
+- pynput — F8 push-to-talk when supported by the desktop session.
 
-## План развития
+## Roadmap
 
-TTS, wake word, VAD, streaming STT, GUI, инструменты и выполнение действий, MCP, векторная память и автозапуск пока не реализованы.
+TTS, wake word, VAD, streaming STT, GUI, tools and action execution, MCP, vector memory, and autostart are not implemented yet.
