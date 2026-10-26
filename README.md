@@ -1,6 +1,6 @@
 # Grub Agent
 
-A local voice assistant for Linux. Grub captures speech from a microphone, transcribes it with `faster-whisper`, sends the text to a local Ollama model, and displays the reply in the terminal. Optional Silero TTS can speak replies aloud.
+A local voice assistant for Linux. Grub captures speech from a microphone, transcribes it with `faster-whisper`, sends the request through a small local agent using Ollama and explicitly registered tools, then prints, notifies, and optionally speaks the final reply with Silero TTS.
 
 > A modular, local-first AI voice assistant for Linux, powered by local LLMs, speech recognition, and custom tools.
 
@@ -10,6 +10,7 @@ A local voice assistant for Linux. Grub captures speech from a microphone, trans
 - A short rising tone plays before capture and a distinct falling tone plays after capture.
 - The start tone finishes before the microphone opens. Speak after hearing the tone.
 - The complete model reply appears in the terminal and can be spoken by Silero.
+- A desktop notification displays the final answer; intermediate tool calls are not notified or spoken.
 - Terminal fallback remains available if global keyboard capture is unavailable.
 - `faster-whisper` is loaded once and reused for the lifetime of the process.
 - Ollama is called through its local HTTP API; conversation history is bounded by a configurable number of turns.
@@ -21,11 +22,19 @@ A local voice assistant for Linux. Grub captures speech from a microphone, trans
 - Selectable Silero voice (`aidar`, `eugene`, `baya`, `kseniya`, or `xenia`) and output volume/device.
 - F8 can interrupt spoken playback and start a new push-to-talk recording.
 - If PyTorch, Silero, or an output device is unavailable, text replies continue to work.
+- Native Ollama tool calling with JSON Schema validation and an explicit registry/executor.
+- Two read-only tools: system information and integer addition.
+- Optional `smartled_set_color` write tool for static room-light control through the separate local SmartLED API. It is denied by default and can be enabled without allowing other write tools.
+- `restricted` tools and all non-explicitly enabled `write` tools remain denied.
+- Tool execution is sequential, with limits of five tool rounds and eight tool calls per request.
+- No shell-command or file-operation tool is registered.
 
 ## Requirements
 
 - Linux Mint and Python 3.10 or newer (developed with Python 3.12).
 - Ollama and the `gemma4:12b` model.
+- `jsonschema` for validating model-generated tool arguments.
+- `notify-send` from the `libnotify-bin` package for desktop notifications.
 - A microphone accessible through PortAudio.
 - An NVIDIA GPU with compatible CUDA/cuDNN runtime libraries for GPU-based `faster-whisper` inference.
 - Internet access for the first Whisper model download. Transcription runs locally after the model is cached.
@@ -37,7 +46,7 @@ F8 is handled globally by `pynput` without root access. Grub targets X11; Waylan
 
 ```bash
 cd ~/Projects/grub-agent
-sudo apt install python3-venv python3-dev portaudio19-dev
+sudo apt install python3-venv python3-dev portaudio19-dev libnotify-bin
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -82,6 +91,35 @@ Run `main.py` from the project root using the Python environment where the requi
 
 When Grub reports that it is ready, you can minimize the terminal and use other applications. Hold F8, wait for the start tone, speak, and release the key. The full answer appears in the terminal; Silero then speaks it. Press F8 while Grub is speaking to stop playback and begin a new recording. Press Ctrl+C in the terminal to exit. If F8 is unavailable, follow the Enter-mode prompts; terminal fallback does not support interrupting speech.
 
+Tool calls are selected by the model through Ollama's native `/api/chat` `tools` field. Grub sends the tool schemas on each agent request, validates each argument object locally, checks permissions, and then invokes only the registered Python handler. The assistant's tool-call message and each `role: tool` result are kept in the conversation sent back to Ollama. Only the final answer is shown as a desktop notification or sent to TTS.
+
+The registry contains `get_system_info` and `calculate_sum`, plus the SmartLED color tool. Tool definitions live with their handlers under `grub/tools/`; `main.py` registers them explicitly. No files are imported automatically from that folder.
+
+### SmartLED room-light control
+
+The optional `smartled_set_color` tool sends only RGB values to a local HTTP
+service. It does not connect to the ESP32 or know its TCP protocol. Run the
+standalone API from `~/Projects/LEDClient` as described in that project's
+README, then configure Grub:
+
+```bash
+export GRUB_SMARTLED_API_URL=http://127.0.0.1:8765
+export GRUB_ALLOW_SMARTLED_CONTROL=true
+python main.py
+```
+
+`GRUB_ALLOW_SMARTLED_CONTROL` defaults to `false`; enabling it allows only
+`smartled_set_color`, not every `write` tool. The API URL is read from trusted
+process configuration, never from model arguments, and the client accepts only
+localhost URLs. `GRUB_SMARTLED_API_TIMEOUT` sets its HTTP timeout (default 4
+seconds). If control is disabled, the tool remains visible to the model but its
+execution is denied. A confirmed controller response permits a brief “Готово”; a
+sent-but-unconfirmed result or an error must be described accurately.
+
+To test voice control, start the API and Grub with the settings above, hold F8,
+and say “Граб, сделай подсветку фиолетовой”. Gemma chooses approximate RGB
+values and Grub passes them to the one registered tool.
+
 The start tone is played before audio capture so it is not sent to Whisper. Start speaking after the tone. Sound output uses the system's default playback device independently of the selected microphone.
 
 ### Manual X11 check
@@ -89,10 +127,16 @@ The start tone is played before audio capture so it is not sent to Whisper. Star
 1. Start Grub from a terminal in the X11 session and wait for the F8-ready message.
 2. Minimize the terminal and open a browser or editor.
 3. Hold F8, wait for the rising tone, say a short question, and release F8.
-4. Confirm the falling tone plays, the full answer appears in the terminal, and the reply is spoken.
+4. Confirm the falling tone plays, the full answer appears in the terminal, a desktop notification appears, and the reply is spoken.
 5. During a spoken reply, press and keep holding F8 until the speech stops and the start tone plays; confirm that recording begins and release F8 after a short phrase.
+6. Ask “Граб, какая у меня операционная система?” and confirm Grub calls `get_system_info` before answering.
+7. Ask “Граб, сколько будет 125 плюс 347?” and confirm the final answer is based on `calculate_sum` returning `472`.
+8. Ask “Граб, привет!” and confirm it answers without calling a tool.
+9. Ask “Граб, удали все файлы на компьютере.” Confirm Grub explains that it cannot do this; there is no shell or file-operation tool available.
 
-The automated tests use stubs. They do not simulate a physical key press, microphone speech, or real Silero inference.
+Tool selection depends on the model following the native Ollama tool interface; the executor still validates every call and will never execute a tool name that is not registered. These manual checks need a working Ollama instance and `gemma4:12b`.
+
+The automated tests use fake LLM responses and stub audio. They do not simulate a physical key press, microphone speech, real Silero inference, or a live Ollama model.
 
 List available input devices with:
 
@@ -114,7 +158,10 @@ GRUB_AUDIO_DEVICE=2 python main.py
 | `GRUB_OLLAMA_URL` | `http://localhost:11434` | Local Ollama API URL |
 | `GRUB_OLLAMA_TIMEOUT` | `120` | Request timeout in seconds |
 | `GRUB_OLLAMA_KEEP_ALIVE` | `10m` | How long Ollama keeps the model loaded after a request |
-| `GRUB_HISTORY_TURNS` | `10` | Number of user/assistant message pairs to retain |
+| `GRUB_HISTORY_TURNS` | `10` | Number of completed conversation turns to retain, including tool messages |
+| `GRUB_ALLOW_SMARTLED_CONTROL` | `false` | Explicitly enables only the `smartled_set_color` write tool when `true` |
+| `GRUB_SMARTLED_API_URL` | `http://127.0.0.1:8765` | Local SmartLED API origin; non-loopback URLs are rejected |
+| `GRUB_SMARTLED_API_TIMEOUT` | `4` | SmartLED API request timeout in seconds |
 | `GRUB_STT_MODEL` | `small` | `faster-whisper` model |
 | `GRUB_STT_DEVICE` | `cuda` | `faster-whisper` device: `cuda` or `cpu` |
 | `GRUB_STT_COMPUTE_TYPE` | `float16` | `faster-whisper` compute type |
@@ -147,14 +194,14 @@ python tts_test.py --voice eugene --text "Проверка русского го
 
 Omit `--text` to enter an arbitrary phrase interactively. The tool reports model load time, synthesis time, and generated audio duration. Use it to compare the five available voices.
 
-## Syntax check
+## Tests and syntax check
 
 ```bash
 python -m compileall -q main.py grub
 python -m unittest discover -s tests -v
 ```
 
-The unit tests use stubs for keyboard callbacks, Ollama, TTS, and audio playback. They do not test physical devices or real Silero inference.
+Unit tests cover tool registration, schema validation, permission denials, handler failures, native Ollama message formatting, normal replies, sequential tool calls, tool limits, and final-only notification/TTS behavior. They use fake LLM responses and do not test physical devices or real Silero inference.
 
 ## Project structure
 
@@ -162,16 +209,31 @@ The unit tests use stubs for keyboard callbacks, Ollama, TTS, and audio playback
 grub-agent/
 ├── grub/
 │   ├── __init__.py
+│   ├── agent/
+│   │   ├── __init__.py
+│   │   ├── core.py
+│   │   ├── executor.py
+│   │   ├── models.py
+│   │   └── registry.py
 │   ├── assistant.py
 │   ├── audio.py
 │   ├── feedback.py
 │   ├── llm.py
 │   ├── playback.py
 │   ├── stt.py
+│   ├── tools/
+│   │   ├── __init__.py
+│   │   ├── calculate_sum.py
+│   │   ├── smartled.py
+│   │   └── system_info.py
 │   └── tts.py
 ├── tests/
+│   ├── test_agent.py
 │   ├── test_assistant.py
-│   └── test_feedback.py
+│   ├── test_feedback.py
+│   ├── test_smartled.py
+│   ├── test_ollama_tools.py
+│   └── test_tools.py
 ├── .gitignore
 ├── LICENSE
 ├── main.py
@@ -186,9 +248,10 @@ grub-agent/
 - sounddevice and NumPy — microphone capture, in-memory audio buffers, and output playback.
 - faster-whisper / CTranslate2 — local speech recognition.
 - Ollama HTTP API — local LLM chat.
+- `jsonschema` — validation of model-generated tool arguments.
 - Silero TTS / PyTorch (optional) — local Russian speech synthesis.
 - pynput — F8 push-to-talk when supported by the desktop session.
 
 ## Roadmap
 
-Wake word, VAD, streaming STT, GUI, tools and action execution, MCP, vector memory, and autostart are not implemented yet.
+Wake word, VAD, streaming STT, GUI, additional write/restricted tools, MCP, vector memory, and autostart are not implemented yet.

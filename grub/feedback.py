@@ -1,20 +1,24 @@
-"""Short audio cues for push-to-talk recording."""
+"""Short audio cues and Linux desktop notifications."""
 
 from __future__ import annotations
 
 import importlib
 import math
+import shutil
+import subprocess
 import sys
 
 
 class FeedbackManager:
     SAMPLE_RATE = 22_050
+    MAX_NOTIFICATION_CHARS = 500
 
     def __init__(self, volume: float = 0.12, output_device: int | None = None) -> None:
         self.volume = max(0.0, min(1.0, float(volume)))
         self.output_device = output_device
         self._sound_disabled = False
         self._sound_warning_shown = False
+        self._notification_warning_shown = False
         self._sd = None
         self._np = None
 
@@ -23,6 +27,30 @@ class FeedbackManager:
 
     def recording_stopped(self) -> None:
         self._play_tone(0.14, 820.0, 480.0)
+
+    def notify(self, text: str) -> None:
+        message = text.strip()
+        if not message:
+            return
+        if len(message) > self.MAX_NOTIFICATION_CHARS:
+            message = message[: self.MAX_NOTIFICATION_CHARS - 1].rstrip() + "…"
+        executable = shutil.which("notify-send")
+        if executable is None:
+            self._warn_notification_once("notify-send is missing; install libnotify-bin.")
+            return
+        try:
+            result = subprocess.run(
+                [executable, "--app-name=Grub", "Grub", message],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=2.0,
+            )
+            if result.returncode != 0:
+                detail = result.stderr.strip() or f"exit status {result.returncode}"
+                self._warn_notification_once(f"Desktop notification failed: {detail}")
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            self._warn_notification_once(f"Desktop notification failed: {exc}")
 
     def _play_tone(self, duration: float, start_hz: float, end_hz: float) -> None:
         if self._sound_disabled or self.volume <= 0:
@@ -60,3 +88,8 @@ class FeedbackManager:
         envelope[:fade_count] = np.linspace(0.0, 1.0, fade_count, endpoint=False)
         envelope[-fade_count:] = np.linspace(1.0, 0.0, fade_count, endpoint=True)
         return (self.volume * envelope * np.sin(phase)).astype(np.float32, copy=False)
+
+    def _warn_notification_once(self, message: str) -> None:
+        if not self._notification_warning_shown:
+            print(f"[NOTIFY] {message}", file=sys.stderr)
+            self._notification_warning_shown = True

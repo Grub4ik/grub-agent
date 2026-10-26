@@ -6,6 +6,7 @@ pynput
 nvidia-cublas-cu12
 nvidia-cudnn-cu12>=9,<10
 omegaconf
+jsonschema
 
 # Optional Silero TTS uses PyTorch. Install the CPU/CUDA PyTorch build that matches
 # your machine separately (see README); a generic torch requirement here could

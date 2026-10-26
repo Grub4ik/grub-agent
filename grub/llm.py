@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import http.client
 import json
+import time
 from urllib.parse import urlsplit
+from typing import Any
 
 
 class OllamaError(RuntimeError):
@@ -36,7 +38,7 @@ class OllamaClient:
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
         connection_class = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
         self._connection = connection_class(parsed.hostname, port, timeout=timeout)
-        self._history: list[dict[str, str]] = []
+        self._history: list[dict[str, Any]] = []
 
     def check_ready(self) -> None:
         try:
@@ -64,21 +66,8 @@ class OllamaClient:
         if not user_text:
             raise ValueError("Пустой текст нельзя отправлять в Ollama.")
 
-        messages: list[dict[str, str]] = []
-        if self.system_prompt:
-            messages.append({"role": "system", "content": self.system_prompt})
-        messages.extend(self._history)
-        messages.append({"role": "user", "content": user_text})
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "stream": False,
-            "think": False,
-            "keep_alive": self.keep_alive,
-        }
-
-        result = self._request("POST", "/api/chat", payload)
-        message = result.get("message") or {}
+        messages: list[dict[str, Any]] = [*self._history, {"role": "user", "content": user_text}]
+        message, elapsed = self.chat_messages(messages)
         answer = str(message.get("content") or "").strip()
         if not answer:
             raise OllamaError("Ollama вернула пустой ответ.")
@@ -90,7 +79,40 @@ class OllamaClient:
             ]
         )
         self._history = self._history[-self.history_turns * 2 :]
-        return answer, float(result.get("total_duration", 0)) / 1_000_000_000
+        return answer, elapsed
+
+    def chat_messages(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+    ) -> tuple[dict[str, Any], float]:
+        """Send full Ollama chat history, including native tool messages."""
+        request_messages: list[dict[str, Any]] = []
+        if self.system_prompt:
+            request_messages.append({"role": "system", "content": self.system_prompt})
+        request_messages.extend(messages)
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": request_messages,
+            "stream": False,
+            "think": False,
+            "keep_alive": self.keep_alive,
+        }
+        if tools is not None:
+            payload["tools"] = tools
+
+        started = time.perf_counter()
+        result = self._request("POST", "/api/chat", payload)
+        try:
+            elapsed = float(result.get("total_duration") or 0) / 1_000_000_000
+        except (TypeError, ValueError):
+            elapsed = 0.0
+        if elapsed <= 0:
+            elapsed = time.perf_counter() - started
+        message = result.get("message")
+        if not isinstance(message, dict):
+            raise OllamaError("Ollama вернула ответ без корректного message.")
+        return message, elapsed
 
     def close(self) -> None:
         self._connection.close()

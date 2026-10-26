@@ -9,6 +9,7 @@ import threading
 import time
 from enum import Enum
 
+from .agent import AgentCore
 from .audio import AudioCapture, AudioError, Recording
 from .feedback import FeedbackManager
 from .llm import OllamaClient, OllamaError
@@ -21,7 +22,10 @@ SYSTEM_PROMPT = (
     "You are Grub, a local AI voice assistant running on Linux. You are helpful, "
     "technically competent, concise, and conversational. Respond in the user's language. "
     "Your responses will eventually be spoken aloud, so prefer clear and natural sentences. "
-    "Do not claim to have performed actions you cannot actually perform."
+    "Use only the tools provided with the request. Use them for exact system information and arithmetic. "
+    "Treat tool results as authoritative, and never claim a tool succeeded when its result says it failed. "
+    "Do not claim to have performed actions you cannot actually perform. There is no shell or file-operation tool. "
+    "If a request needs an unavailable capability, explain that you cannot perform it."
 )
 
 
@@ -39,6 +43,7 @@ class VoiceAssistant:
         audio: AudioCapture,
         stt: WhisperSTT,
         llm: OllamaClient,
+        agent: AgentCore,
         feedback: FeedbackManager | None = None,
         tts: SpeechSynthesizer | None = None,
         playback: AudioPlayback | None = None,
@@ -46,6 +51,7 @@ class VoiceAssistant:
         self.audio = audio
         self.stt = stt
         self.llm = llm
+        self.agent = agent
         self.feedback = feedback or FeedbackManager()
         self.tts = tts
         self.playback = playback or AudioPlayback()
@@ -339,11 +345,23 @@ class VoiceAssistant:
 
         print(f"[STT] {text}")
         print(f"[STT] Time: {stt_time:.2f}s")
-        answer, llm_time = self.llm.chat(text)
+        agent_response = self.agent.run(text)
+        for result in agent_response.tool_results:
+            if result.success:
+                print(f"[TOOL] {result.tool} completed.")
+            else:
+                print(f"[TOOL] {result.tool} failed: {result.error}", file=sys.stderr)
+
+        answer = agent_response.text
+        if not answer:
+            print("[AGENT] No final text response was returned.", file=sys.stderr)
+            return
+
         total_time = time.perf_counter() - request_started
         print(f"[GRUB] {answer}")
-        print(f"[LLM] Time: {llm_time:.2f}s")
+        print(f"[LLM] Time: {agent_response.llm_seconds:.2f}s")
         print(f"[GRUB] Total processing time: {total_time:.2f}s")
+        self.feedback.notify(answer)
         if self.tts is not None:
             self._speak(answer)
 

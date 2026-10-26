@@ -7,12 +7,21 @@ import argparse
 import os
 import sys
 
+from grub.agent import AgentCore, ToolExecutor, ToolRegistry
 from grub.audio import AudioCapture, AudioError
 from grub.assistant import SYSTEM_PROMPT, VoiceAssistant
 from grub.feedback import FeedbackManager
 from grub.llm import OllamaClient, OllamaError
 from grub.playback import AudioPlayback
 from grub.stt import STTError, WhisperSTT, configure_cuda_library_path
+from grub.tools import (
+    CALCULATE_SUM_SCHEMA,
+    SYSTEM_INFO_SCHEMA,
+    calculate_sum,
+    get_system_info,
+    SmartLEDAPIClient,
+    register_smartled_tool,
+)
 from grub.tts import SUPPORTED_VOICES, SpeechSynthesizer
 
 
@@ -22,6 +31,13 @@ def _int_env(name: str, default: int, minimum: int, maximum: int) -> int:
     except (TypeError, ValueError):
         value = default
     return max(minimum, min(maximum, value))
+
+
+def _enabled_env(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -88,6 +104,37 @@ def main() -> int:
             timeout=float(os.environ.get("GRUB_OLLAMA_TIMEOUT", "120")),
             keep_alive=os.environ.get("GRUB_OLLAMA_KEEP_ALIVE", "10m"),
         )
+        registry = ToolRegistry()
+        smartled_client = SmartLEDAPIClient(
+            base_url=os.environ.get("GRUB_SMARTLED_API_URL", "http://127.0.0.1:8765"),
+            timeout=float(os.environ.get("GRUB_SMARTLED_API_TIMEOUT", "4")),
+        )
+        registry.register(
+            name="get_system_info",
+            description="Get the operating system name, release, and architecture.",
+            parameters=SYSTEM_INFO_SCHEMA,
+            handler=get_system_info,
+            permission="read",
+        )
+        registry.register(
+            name="calculate_sum",
+            description="Add two integers and return their sum.",
+            parameters=CALCULATE_SUM_SCHEMA,
+            handler=calculate_sum,
+            permission="read",
+        )
+        register_smartled_tool(registry, smartled_client)
+        allowed_write_tools = (
+            {"smartled_set_color"}
+            if _enabled_env("GRUB_ALLOW_SMARTLED_CONTROL")
+            else set()
+        )
+        agent = AgentCore(
+            llm=llm,
+            registry=registry,
+            executor=ToolExecutor(registry, allowed_write_tools=allowed_write_tools),
+            history_turns=_int_env("GRUB_HISTORY_TURNS", 10, 1, 50),
+        )
         feedback = FeedbackManager(
             volume=float(os.environ.get("GRUB_BEEP_VOLUME", "0.12")),
             output_device=feedback_device,
@@ -95,7 +142,7 @@ def main() -> int:
         tts = None if args.no_tts else SpeechSynthesizer(voice=args.voice, device="cpu")
         playback = AudioPlayback(device=playback_device, volume=tts_volume)
         try:
-            VoiceAssistant(audio, stt, llm, feedback, tts, playback).run()
+            VoiceAssistant(audio, stt, llm, agent, feedback, tts, playback).run()
         finally:
             llm.close()
         return 0
