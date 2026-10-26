@@ -8,6 +8,7 @@ import sys
 
 from grub.audio import AudioCapture, AudioError
 from grub.assistant import SYSTEM_PROMPT, VoiceAssistant
+from grub.feedback import FeedbackManager
 from grub.llm import OllamaClient, OllamaError
 from grub.stt import STTError, WhisperSTT, configure_cuda_library_path
 
@@ -30,6 +31,12 @@ def main() -> int:
         except ValueError as exc:
             raise AudioError("GRUB_AUDIO_DEVICE должен быть номером аудиоустройства.") from exc
 
+        feedback_device_value = os.environ.get("GRUB_FEEDBACK_DEVICE", "").strip()
+        try:
+            feedback_device = int(feedback_device_value) if feedback_device_value else None
+        except ValueError as exc:
+            raise AudioError("GRUB_FEEDBACK_DEVICE must be an output device number.") from exc
+
         audio = AudioCapture(device=audio_device)
         stt = WhisperSTT(
             model_name=os.environ.get("GRUB_STT_MODEL", "small"),
@@ -45,8 +52,12 @@ def main() -> int:
             timeout=float(os.environ.get("GRUB_OLLAMA_TIMEOUT", "120")),
             keep_alive=os.environ.get("GRUB_OLLAMA_KEEP_ALIVE", "10m"),
         )
+        feedback = FeedbackManager(
+            volume=float(os.environ.get("GRUB_BEEP_VOLUME", "0.12")),
+            output_device=feedback_device,
+        )
         try:
-            VoiceAssistant(audio, stt, llm).run()
+            VoiceAssistant(audio, stt, llm, feedback).run()
         finally:
             llm.close()
         return 0
