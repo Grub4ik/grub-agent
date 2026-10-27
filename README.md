@@ -24,8 +24,7 @@ A local voice assistant for Linux. Grub captures speech from a microphone, trans
 - If PyTorch, Silero, or an output device is unavailable, text replies continue to work.
 - Native Ollama tool calling with JSON Schema validation and an explicit registry/executor.
 - Two read-only tools: system information and integer addition.
-- Optional `smartled_set_color` write tool for static room-light control through the separate local SmartLED API. It is denied by default and can be enabled without allowing other write tools.
-- `restricted` tools and all non-explicitly enabled `write` tools remain denied.
+- `write` and `restricted` tools are denied by default.
 - Tool execution is sequential, with limits of five tool rounds and eight tool calls per request.
 - No shell-command or file-operation tool is registered.
 
@@ -93,32 +92,7 @@ When Grub reports that it is ready, you can minimize the terminal and use other 
 
 Tool calls are selected by the model through Ollama's native `/api/chat` `tools` field. Grub sends the tool schemas on each agent request, validates each argument object locally, checks permissions, and then invokes only the registered Python handler. The assistant's tool-call message and each `role: tool` result are kept in the conversation sent back to Ollama. Only the final answer is shown as a desktop notification or sent to TTS.
 
-The registry contains `get_system_info` and `calculate_sum`, plus the SmartLED color tool. Tool definitions live with their handlers under `grub/tools/`; `main.py` registers them explicitly. No files are imported automatically from that folder.
-
-### SmartLED room-light control
-
-The optional `smartled_set_color` tool sends only RGB values to a local HTTP
-service. It does not connect to the ESP32 or know its TCP protocol. Run the
-standalone API from `~/Projects/LEDClient` as described in that project's
-README, then configure Grub:
-
-```bash
-export GRUB_SMARTLED_API_URL=http://127.0.0.1:8765
-export GRUB_ALLOW_SMARTLED_CONTROL=true
-python main.py
-```
-
-`GRUB_ALLOW_SMARTLED_CONTROL` defaults to `false`; enabling it allows only
-`smartled_set_color`, not every `write` tool. The API URL is read from trusted
-process configuration, never from model arguments, and the client accepts only
-localhost URLs. `GRUB_SMARTLED_API_TIMEOUT` sets its HTTP timeout (default 4
-seconds). If control is disabled, the tool remains visible to the model but its
-execution is denied. A confirmed controller response permits a brief “Готово”; a
-sent-but-unconfirmed result or an error must be described accurately.
-
-To test voice control, start the API and Grub with the settings above, hold F8,
-and say “Граб, сделай подсветку фиолетовой”. Gemma chooses approximate RGB
-values and Grub passes them to the one registered tool.
+The registry contains exactly two read-only tools: `get_system_info` and `calculate_sum`. Tool definitions live with their handlers under `grub/tools/`; `main.py` registers them explicitly. No files are imported automatically from that folder.
 
 The start tone is played before audio capture so it is not sent to Whisper. Start speaking after the tone. Sound output uses the system's default playback device independently of the selected microphone.
 
@@ -159,9 +133,6 @@ GRUB_AUDIO_DEVICE=2 python main.py
 | `GRUB_OLLAMA_TIMEOUT` | `120` | Request timeout in seconds |
 | `GRUB_OLLAMA_KEEP_ALIVE` | `10m` | How long Ollama keeps the model loaded after a request |
 | `GRUB_HISTORY_TURNS` | `10` | Number of completed conversation turns to retain, including tool messages |
-| `GRUB_ALLOW_SMARTLED_CONTROL` | `false` | Explicitly enables only the `smartled_set_color` write tool when `true` |
-| `GRUB_SMARTLED_API_URL` | `http://127.0.0.1:8765` | Local SmartLED API origin; non-loopback URLs are rejected |
-| `GRUB_SMARTLED_API_TIMEOUT` | `4` | SmartLED API request timeout in seconds |
 | `GRUB_STT_MODEL` | `small` | `faster-whisper` model |
 | `GRUB_STT_DEVICE` | `cuda` | `faster-whisper` device: `cuda` or `cpu` |
 | `GRUB_STT_COMPUTE_TYPE` | `float16` | `faster-whisper` compute type |
@@ -224,14 +195,12 @@ grub-agent/
 │   ├── tools/
 │   │   ├── __init__.py
 │   │   ├── calculate_sum.py
-│   │   ├── smartled.py
 │   │   └── system_info.py
 │   └── tts.py
 ├── tests/
 │   ├── test_agent.py
 │   ├── test_assistant.py
 │   ├── test_feedback.py
-│   ├── test_smartled.py
 │   ├── test_ollama_tools.py
 │   └── test_tools.py
 ├── .gitignore

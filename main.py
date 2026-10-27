@@ -19,8 +19,6 @@ from grub.tools import (
     SYSTEM_INFO_SCHEMA,
     calculate_sum,
     get_system_info,
-    SmartLEDAPIClient,
-    register_smartled_tool,
 )
 from grub.tts import SUPPORTED_VOICES, SpeechSynthesizer
 
@@ -31,13 +29,6 @@ def _int_env(name: str, default: int, minimum: int, maximum: int) -> int:
     except (TypeError, ValueError):
         value = default
     return max(minimum, min(maximum, value))
-
-
-def _enabled_env(name: str, default: bool = False) -> bool:
-    value = os.environ.get(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -105,10 +96,6 @@ def main() -> int:
             keep_alive=os.environ.get("GRUB_OLLAMA_KEEP_ALIVE", "10m"),
         )
         registry = ToolRegistry()
-        smartled_client = SmartLEDAPIClient(
-            base_url=os.environ.get("GRUB_SMARTLED_API_URL", "http://127.0.0.1:8765"),
-            timeout=float(os.environ.get("GRUB_SMARTLED_API_TIMEOUT", "4")),
-        )
         registry.register(
             name="get_system_info",
             description="Get the operating system name, release, and architecture.",
@@ -123,16 +110,10 @@ def main() -> int:
             handler=calculate_sum,
             permission="read",
         )
-        register_smartled_tool(registry, smartled_client)
-        allowed_write_tools = (
-            {"smartled_set_color"}
-            if _enabled_env("GRUB_ALLOW_SMARTLED_CONTROL")
-            else set()
-        )
         agent = AgentCore(
             llm=llm,
             registry=registry,
-            executor=ToolExecutor(registry, allowed_write_tools=allowed_write_tools),
+            executor=ToolExecutor(registry),
             history_turns=_int_env("GRUB_HISTORY_TURNS", 10, 1, 50),
         )
         feedback = FeedbackManager(

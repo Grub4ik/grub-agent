@@ -16,11 +16,9 @@ class ToolExecutor:
         self,
         registry: ToolRegistry,
         allowed_permissions: Iterable[str] = ("read",),
-        allowed_write_tools: Iterable[str] = (),
     ) -> None:
         self.registry = registry
         self.allowed_permissions = frozenset(allowed_permissions)
-        self.allowed_write_tools = frozenset(allowed_write_tools)
 
     def execute(self, call: ToolCall | dict[str, Any]) -> ToolResult:
         if isinstance(call, dict):
@@ -31,10 +29,7 @@ class ToolExecutor:
         definition = self.registry.get(call.name)
         if definition is None:
             return ToolResult(call.name, False, error="Tool not found.")
-        write_tool_is_allowed = (
-            definition.permission == "write" and call.name in self.allowed_write_tools
-        )
-        if definition.permission not in self.allowed_permissions and not write_tool_is_allowed:
+        if definition.permission not in self.allowed_permissions:
             return ToolResult(
                 call.name,
                 False,
