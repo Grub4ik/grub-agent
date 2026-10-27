@@ -1,6 +1,6 @@
 # Grub Agent
 
-A local voice assistant for Linux. Grub captures speech from a microphone, transcribes it with `faster-whisper`, sends the request through a small local agent using Ollama and explicitly registered tools, then prints, notifies, and optionally speaks the final reply with Silero TTS.
+A local voice assistant for Linux. Grub captures speech from a microphone, transcribes it with `faster-whisper`, sends the request through a small local agent using Ollama and explicitly registered tools, then prints and optionally speaks the final reply with Silero TTS.
 
 > A modular, local-first AI voice assistant for Linux, powered by local LLMs, speech recognition, and custom tools.
 
@@ -10,7 +10,6 @@ A local voice assistant for Linux. Grub captures speech from a microphone, trans
 - A short rising tone plays before capture and a distinct falling tone plays after capture.
 - The start tone finishes before the microphone opens. Speak after hearing the tone.
 - The complete model reply appears in the terminal and can be spoken by Silero.
-- A desktop notification displays the final answer; intermediate tool calls are not notified or spoken.
 - Terminal fallback remains available if global keyboard capture is unavailable.
 - `faster-whisper` is loaded once and reused for the lifetime of the process.
 - Ollama is called through its local HTTP API; conversation history is bounded by a configurable number of turns.
@@ -23,7 +22,7 @@ A local voice assistant for Linux. Grub captures speech from a microphone, trans
 - F8 can interrupt spoken playback and start a new push-to-talk recording.
 - If PyTorch, Silero, or an output device is unavailable, text replies continue to work.
 - Native Ollama tool calling with JSON Schema validation and an explicit registry/executor.
-- Two read-only tools: system information and integer addition.
+- Three read-only tools: system information, integer addition, and SmartLED discovery on `192.168.0.0/24`.
 - `write` and `restricted` tools are denied by default.
 - Tool execution is sequential, with limits of five tool rounds and eight tool calls per request.
 - No shell-command or file-operation tool is registered.
@@ -33,7 +32,6 @@ A local voice assistant for Linux. Grub captures speech from a microphone, trans
 - Linux Mint and Python 3.10 or newer (developed with Python 3.12).
 - Ollama and the `gemma4:12b` model.
 - `jsonschema` for validating model-generated tool arguments.
-- `notify-send` from the `libnotify-bin` package for desktop notifications.
 - A microphone accessible through PortAudio.
 - An NVIDIA GPU with compatible CUDA/cuDNN runtime libraries for GPU-based `faster-whisper` inference.
 - Internet access for the first Whisper model download. Transcription runs locally after the model is cached.
@@ -45,7 +43,7 @@ F8 is handled globally by `pynput` without root access. Grub targets X11; Waylan
 
 ```bash
 cd ~/Projects/grub-agent
-sudo apt install python3-venv python3-dev portaudio19-dev libnotify-bin
+sudo apt install python3-venv python3-dev portaudio19-dev
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -90,9 +88,13 @@ Run `main.py` from the project root using the Python environment where the requi
 
 When Grub reports that it is ready, you can minimize the terminal and use other applications. Hold F8, wait for the start tone, speak, and release the key. The full answer appears in the terminal; Silero then speaks it. Press F8 while Grub is speaking to stop playback and begin a new recording. Press Ctrl+C in the terminal to exit. If F8 is unavailable, follow the Enter-mode prompts; terminal fallback does not support interrupting speech.
 
-Tool calls are selected by the model through Ollama's native `/api/chat` `tools` field. Grub sends the tool schemas on each agent request, validates each argument object locally, checks permissions, and then invokes only the registered Python handler. The assistant's tool-call message and each `role: tool` result are kept in the conversation sent back to Ollama. Only the final answer is shown as a desktop notification or sent to TTS.
+Tool calls are selected by the model through Ollama's native `/api/chat` `tools` field. Grub sends the tool schemas on each agent request, validates each argument object locally, checks permissions, and then invokes only the registered Python handler. The assistant's tool-call message and each `role: tool` result are kept in the conversation sent back to Ollama. Only the final answer is printed and optionally sent to TTS.
 
-The registry contains exactly two read-only tools: `get_system_info` and `calculate_sum`. Tool definitions live with their handlers under `grub/tools/`; `main.py` registers them explicitly. No files are imported automatically from that folder.
+The registry explicitly registers three read-only tools: `get_system_info`, `calculate_sum`, and `discover_smartled`. Tool definitions live with their handlers under `grub/tools/`; no files are imported automatically from that folder.
+
+`discover_smartled` checks only `192.168.0.1` through `192.168.0.254`, connects to TCP port `4210`, and sends only `HELP\n`. The model receives no arguments for this tool, so it cannot choose an address, port, command, or scan range. Each connection and response has a short timeout; with the defaults, the theoretical socket-wait budget for all 254 addresses is about 76 seconds, plus operating-system and loop overhead. A match stops the scan immediately. The result is kept in the current conversation only; Grub does not save the address to disk.
+
+To test the feature manually, start Grub and ask “Граб, найди мою подсветку”. That request starts the real local network scan. The tool unit tests use fake sockets and never scan the network.
 
 The start tone is played before audio capture so it is not sent to Whisper. Start speaking after the tone. Sound output uses the system's default playback device independently of the selected microphone.
 
@@ -101,7 +103,7 @@ The start tone is played before audio capture so it is not sent to Whisper. Star
 1. Start Grub from a terminal in the X11 session and wait for the F8-ready message.
 2. Minimize the terminal and open a browser or editor.
 3. Hold F8, wait for the rising tone, say a short question, and release F8.
-4. Confirm the falling tone plays, the full answer appears in the terminal, a desktop notification appears, and the reply is spoken.
+4. Confirm the falling tone plays, the full answer appears in the terminal, and the reply is spoken if TTS is enabled.
 5. During a spoken reply, press and keep holding F8 until the speech stops and the start tone plays; confirm that recording begins and release F8 after a short phrase.
 6. Ask “Граб, какая у меня операционная система?” and confirm Grub calls `get_system_info` before answering.
 7. Ask “Граб, сколько будет 125 плюс 347?” and confirm the final answer is based on `calculate_sum` returning `472`.
@@ -172,7 +174,7 @@ python -m compileall -q main.py grub
 python -m unittest discover -s tests -v
 ```
 
-Unit tests cover tool registration, schema validation, permission denials, handler failures, native Ollama message formatting, normal replies, sequential tool calls, tool limits, and final-only notification/TTS behavior. They use fake LLM responses and do not test physical devices or real Silero inference.
+Unit tests cover tool registration, schema validation, permission denials, handler failures, native Ollama message formatting, normal replies, sequential tool calls, tool limits, SmartLED protocol handling with fake sockets, and final-only TTS behavior. They use fake LLM responses and do not test physical devices, real Silero inference, or a live network scan.
 
 ## Project structure
 
@@ -195,12 +197,13 @@ grub-agent/
 │   ├── tools/
 │   │   ├── __init__.py
 │   │   ├── calculate_sum.py
+│   │   ├── discover_smartled.py
 │   │   └── system_info.py
 │   └── tts.py
 ├── tests/
 │   ├── test_agent.py
 │   ├── test_assistant.py
-│   ├── test_feedback.py
+│   ├── test_discover_smartled.py
 │   ├── test_ollama_tools.py
 │   └── test_tools.py
 ├── .gitignore

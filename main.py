@@ -16,8 +16,10 @@ from grub.playback import AudioPlayback
 from grub.stt import STTError, WhisperSTT, configure_cuda_library_path
 from grub.tools import (
     CALCULATE_SUM_SCHEMA,
+    SMARTLED_DISCOVERY_SCHEMA,
     SYSTEM_INFO_SCHEMA,
     calculate_sum,
+    discover_smartled,
     get_system_info,
 )
 from grub.tts import SUPPORTED_VOICES, SpeechSynthesizer
@@ -108,6 +110,13 @@ def main() -> int:
             description="Add two integers and return their sum.",
             parameters=CALCULATE_SUM_SCHEMA,
             handler=calculate_sum,
+            permission="read",
+        )
+        registry.register(
+            name="discover_smartled",
+            description="Discover a SmartLED device on the local network and return its IP address.",
+            parameters=SMARTLED_DISCOVERY_SCHEMA,
+            handler=discover_smartled,
             permission="read",
         )
         agent = AgentCore(

@@ -361,7 +361,6 @@ class VoiceAssistant:
         print(f"[GRUB] {answer}")
         print(f"[LLM] Time: {agent_response.llm_seconds:.2f}s")
         print(f"[GRUB] Total processing time: {total_time:.2f}s")
-        self.feedback.notify(answer)
         if self.tts is not None:
             self._speak(answer)
 

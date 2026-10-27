@@ -35,21 +35,19 @@ class AssistantAgentIntegrationTests(unittest.TestCase):
             return True
 
         playback.play.side_effect = play
-        return VoiceAssistant(audio, stt, llm, agent, feedback, tts, playback), agent, feedback, tts
+        return VoiceAssistant(audio, stt, llm, agent, feedback, tts, playback), agent, tts
 
     def test_only_final_agent_text_is_notified_and_spoken(self):
-        assistant, agent, feedback, tts = self.make_assistant("The sum is 42.")
+        assistant, agent, tts = self.make_assistant("The sum is 42.")
         with redirect_stdout(io.StringIO()):
             assistant.process_recording(Recording([0.0], 1.0))
         agent.run.assert_called_once_with("user request")
-        feedback.notify.assert_called_once_with("The sum is 42.")
         tts.synthesize.assert_called_once_with("The sum is 42.")
 
-    def test_missing_final_text_does_not_notify_or_speak(self):
-        assistant, _agent, feedback, tts = self.make_assistant(None)
+    def test_missing_final_text_does_not_speak(self):
+        assistant, _agent, tts = self.make_assistant(None)
         with redirect_stdout(io.StringIO()):
             assistant.process_recording(Recording([0.0], 1.0))
-        feedback.notify.assert_not_called()
         tts.synthesize.assert_not_called()
 
 
