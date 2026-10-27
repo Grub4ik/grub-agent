@@ -22,7 +22,13 @@ from grub.tools import (
     discover_smartled,
     get_system_info,
 )
-from grub.tts import SUPPORTED_VOICES, SpeechSynthesizer
+from grub.tts import (
+    SUPPORTED_DEVICES,
+    SUPPORTED_ENGINES,
+    SUPPORTED_LANGUAGES,
+    SUPPORTED_VOICES,
+    SpeechSynthesizer,
+)
 
 
 def _int_env(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -33,13 +39,37 @@ def _int_env(name: str, default: int, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, value))
 
 
+def _choice_env(name: str, choices: tuple[str, ...], default: str | None) -> str | None:
+    value = os.environ.get(name)
+    return value if value in choices else default
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Local Grub voice assistant")
     parser.add_argument("--no-tts", action="store_true", help="disable speech synthesis")
     parser.add_argument(
         "--voice",
         choices=SUPPORTED_VOICES,
-        default=os.environ.get("GRUB_TTS_VOICE", "aidar"),
+        default=_choice_env("GRUB_TTS_VOICE", SUPPORTED_VOICES, None),
+        help="Supertonic voice (default M1)",
+    )
+    parser.add_argument(
+        "--tts-engine",
+        choices=SUPPORTED_ENGINES,
+        default=_choice_env("GRUB_TTS_ENGINE", SUPPORTED_ENGINES, "supertonic"),
+        help="speech engine: supertonic",
+    )
+    parser.add_argument(
+        "--tts-device",
+        choices=SUPPORTED_DEVICES,
+        default="cpu",
+        help="TTS device; Supertonic uses CPU ONNX Runtime",
+    )
+    parser.add_argument(
+        "--tts-language",
+        choices=SUPPORTED_LANGUAGES,
+        default=_choice_env("GRUB_TTS_LANGUAGE", SUPPORTED_LANGUAGES, "na"),
+        help="Supertonic text language: na (mixed/unknown), ru, or en",
     )
     parser.add_argument(
         "--playback-device",
@@ -129,7 +159,12 @@ def main() -> int:
             volume=float(os.environ.get("GRUB_BEEP_VOLUME", "0.12")),
             output_device=feedback_device,
         )
-        tts = None if args.no_tts else SpeechSynthesizer(voice=args.voice, device="cpu")
+        tts = None if args.no_tts else SpeechSynthesizer(
+            engine=args.tts_engine,
+            voice=args.voice,
+            device=args.tts_device,
+            language=args.tts_language,
+        )
         playback = AudioPlayback(device=playback_device, volume=tts_volume)
         try:
             VoiceAssistant(audio, stt, llm, agent, feedback, tts, playback).run()

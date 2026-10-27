@@ -81,7 +81,10 @@ class VoiceAssistant:
         if self.tts is not None:
             try:
                 tts_load_time = self.tts.load()
-                print(f"[TTS] Silero {self.tts.MODEL_ID} loaded in {tts_load_time:.2f}s.")
+                print(
+                    f"[TTS] {self.tts.engine} {self.tts.MODEL_ID} on {self.tts.device} "
+                    f"loaded in {tts_load_time:.2f}s."
+                )
             except TTSError as exc:
                 print(f"[TTS] Disabled; text replies remain available: {exc}", file=sys.stderr)
                 self.tts = None

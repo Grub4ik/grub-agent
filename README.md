@@ -1,6 +1,6 @@
 # Grub Agent
 
-A local voice assistant for Linux. Grub captures speech from a microphone, transcribes it with `faster-whisper`, sends the request through a small local agent using Ollama and explicitly registered tools, then prints and optionally speaks the final reply with Silero TTS.
+A local voice assistant for Linux. Grub captures speech from a microphone, transcribes it with `faster-whisper`, sends the request through a small local agent using Ollama and explicitly registered tools, then prints and optionally speaks the final reply with Supertonic 3.
 
 > A modular, local-first AI voice assistant for Linux, powered by local LLMs, speech recognition, and custom tools.
 
@@ -9,7 +9,7 @@ A local voice assistant for Linux. Grub captures speech from a microphone, trans
 - Global X11 push-to-talk: hold F8 in any application to record; release it to transcribe.
 - A short rising tone plays before capture and a distinct falling tone plays after capture.
 - The start tone finishes before the microphone opens. Speak after hearing the tone.
-- The complete model reply appears in the terminal and can be spoken by Silero.
+- The complete model reply appears in the terminal and can be spoken by Supertonic 3.
 - Terminal fallback remains available if global keyboard capture is unavailable.
 - `faster-whisper` is loaded once and reused for the lifetime of the process.
 - Ollama is called through its local HTTP API; conversation history is bounded by a configurable number of turns.
@@ -17,10 +17,11 @@ A local voice assistant for Linux. Grub captures speech from a microphone, trans
 - Transcription time, LLM response time, and total processing latency are displayed.
 - F8 callbacks only enqueue events. Recording coordination runs on the assistant thread, while STT and LLM work run in a worker thread.
 - A failed recording, request, sound cue, or TTS operation does not terminate the assistant loop.
-- Optional local Silero `v5_6_ru` speech synthesis, loaded once on startup and run on CPU.
-- Selectable Silero voice (`aidar`, `eugene`, `baya`, `kseniya`, or `xenia`) and output volume/device.
+- Local Supertonic 3 is the speech engine. It runs with ONNX Runtime on CPU and does not compete with Gemma or Whisper for VRAM.
+- Supertonic voice and language mode are configurable; `M1` and language-agnostic `na` are the defaults for Russian-English mixed text.
+- TTS reports synthesis duration, audio duration, and real-time factor in the standalone audition tool.
 - F8 can interrupt spoken playback and start a new push-to-talk recording.
-- If PyTorch, Silero, or an output device is unavailable, text replies continue to work.
+- If Supertonic, its model, or an output device is unavailable, text replies continue to work.
 - Native Ollama tool calling with JSON Schema validation and an explicit registry/executor.
 - Three read-only tools: system information, integer addition, and SmartLED discovery on `192.168.0.0/24`.
 - `write` and `restricted` tools are denied by default.
@@ -35,7 +36,7 @@ A local voice assistant for Linux. Grub captures speech from a microphone, trans
 - A microphone accessible through PortAudio.
 - An NVIDIA GPU with compatible CUDA/cuDNN runtime libraries for GPU-based `faster-whisper` inference.
 - Internet access for the first Whisper model download. Transcription runs locally after the model is cached.
-- Optional Silero TTS requires a compatible PyTorch installation. The first Silero model load downloads its model and Torch Hub code; subsequent runs use the local cache.
+- Supertonic 3 uses the official `supertonic` Python package and ONNX Runtime. Its model and voice styles are downloaded on first load (about 400 MB per upstream documentation) and cached locally.
 
 F8 is handled globally by `pynput` without root access. Grub targets X11; Wayland may restrict global key capture. If the listener cannot start or exits, Grub prints the error and falls back to terminal Enter controls.
 
@@ -50,13 +51,15 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-### Optional Silero TTS setup
+### TTS setup
 
-Silero TTS uses PyTorch and OmegaConf, while the existing Whisper setup uses CTranslate2 and CUDA libraries. OmegaConf is included in `requirements.txt`; PyTorch is intentionally not pinned there because installing a generic PyTorch wheel can change an accelerator-specific setup. If you want speech output, install the PyTorch build appropriate for your operating system and CUDA/CPU choice using the [official PyTorch installation selector](https://pytorch.org/get-started/locally/). Silero's documented standalone requirement is PyTorch 1.12 or newer. Keep the existing `nvidia-cublas-cu12` and `nvidia-cudnn-cu12` dependencies used by faster-whisper.
+Grub uses the official [Supertonic Python SDK](https://github.com/supertone-oss-archive/supertonic-py), calling `TTS(model="supertonic-3", auto_download=True)`, `get_voice_style()`, and `synthesize()`. The upstream API returns a `(waveform, duration)` pair; Grub flattens the waveform to mono float samples and passes it to the existing interruptible `AudioPlayback` at the model's native 44.1 kHz sample rate. The `TTS` object and selected voice style are loaded once at startup and reused.
 
-The Silero model is loaded once when Grub starts. Its first load needs internet access to fetch the official Torch Hub repository and model weights; later loads use PyTorch's cache and can run offline. If PyTorch or Silero fails to load, Grub logs a warning and keeps text chat enabled.
+Supertonic uses ONNX Runtime's CPU execution provider. ONNX Runtime loads the model's ONNX graphs into inference sessions and executes their operators with CPU kernels; this TTS path does not initialize CUDA or require PyTorch. The first model load downloads about 400 MB of model and voice-style files into `~/.cache/supertonic3/`; later runs are local. Text replies remain available if the package, model, or audio output cannot load.
 
-> **Model licence:** the Silero repository currently lists the Russian V5 model under CC-NC-BY. Review the [official licence terms](https://github.com/snakers4/silero-models#licence) before redistributing it or using it commercially. This is separate from the Grub Agent source licence.
+Choose a voice with `--voice M1` (built-in voices are `M1`–`M5` and `F1`–`F5`). Set `--tts-language ru` for Russian-specific handling, `en` for English, or `na` for the language-agnostic fallback; `na` is not a language detector and may pronounce mixed-language phrases differently from `ru`. Compare both modes with the standalone test below. Automatic language classification and perfect pronunciation of English words, IP addresses, and version numbers are not guaranteed.
+
+**Maintenance note:** the upstream `supertone-oss-archive/supertonic-py` repository is archived (read-only as of September 9, 2026). The SDK is pinned to PyPI release `1.3.1` so API changes do not silently alter Grub. Do not expect upstream fixes or security updates from that repository.
 
 Make sure Ollama is running and the model is available:
 
@@ -76,17 +79,18 @@ source .venv/bin/activate
 python main.py
 ```
 
-Use another voice or disable TTS:
+Select a Supertonic voice and language, or disable TTS:
 
 ```bash
-python main.py --voice eugene
+python main.py --voice M1 --tts-language na
+python main.py --voice F2 --tts-language ru
 python main.py --no-tts
-python main.py --voice kseniya --tts-volume 0.7 --playback-device 3
+python main.py --voice M2 --tts-volume 0.7 --playback-device 3
 ```
 
 Run `main.py` from the project root using the Python environment where the requirements are installed. If you use the existing VoiceSTT environment, activate it first with `source ~/Projects/VoiceSTT/.venv/bin/activate`. Do not run `grub/assistant.py` directly; it is a package module, not an entry point. Calling `/usr/bin/python3` explicitly also bypasses an active virtual environment.
 
-When Grub reports that it is ready, you can minimize the terminal and use other applications. Hold F8, wait for the start tone, speak, and release the key. The full answer appears in the terminal; Silero then speaks it. Press F8 while Grub is speaking to stop playback and begin a new recording. Press Ctrl+C in the terminal to exit. If F8 is unavailable, follow the Enter-mode prompts; terminal fallback does not support interrupting speech.
+When Grub reports that it is ready, you can minimize the terminal and use other applications. Hold F8, wait for the start tone, speak, and release the key. The full answer appears in the terminal; the selected TTS engine then speaks it. Press F8 while Grub is speaking to stop playback and begin a new recording. Press Ctrl+C in the terminal to exit. If F8 is unavailable, follow the Enter-mode prompts; terminal fallback does not support interrupting speech.
 
 Tool calls are selected by the model through Ollama's native `/api/chat` `tools` field. Grub sends the tool schemas on each agent request, validates each argument object locally, checks permissions, and then invokes only the registered Python handler. The assistant's tool-call message and each `role: tool` result are kept in the conversation sent back to Ollama. Only the final answer is printed and optionally sent to TTS.
 
@@ -112,7 +116,7 @@ The start tone is played before audio capture so it is not sent to Whisper. Star
 
 Tool selection depends on the model following the native Ollama tool interface; the executor still validates every call and will never execute a tool name that is not registered. These manual checks need a working Ollama instance and `gemma4:12b`.
 
-The automated tests use fake LLM responses and stub audio. They do not simulate a physical key press, microphone speech, real Silero inference, or a live Ollama model.
+The automated tests use fake LLM responses and stub audio. They do not simulate a physical key press, microphone speech, real TTS model inference, or a live Ollama model.
 
 List available input devices with:
 
@@ -142,7 +146,9 @@ GRUB_AUDIO_DEVICE=2 python main.py
 | `GRUB_AUDIO_DEVICE` | System default | Input device index from sounddevice |
 | `GRUB_BEEP_VOLUME` | `0.12` | Feedback cue volume from `0.0` (muted) to `1.0` |
 | `GRUB_FEEDBACK_DEVICE` | System default output | Optional sounddevice output device index |
-| `GRUB_TTS_VOICE` | `aidar` | Silero voice: `aidar`, `eugene`, `baya`, `kseniya`, or `xenia` |
+| `GRUB_TTS_ENGINE` | `supertonic` | TTS engine |
+| `GRUB_TTS_VOICE` | `M1` | Supertonic voice: `M1`–`M5` or `F1`–`F5` |
+| `GRUB_TTS_LANGUAGE` | `na` | Text language mode: language-agnostic fallback, `ru`, or `en` |
 | `GRUB_TTS_VOLUME` | `1.0` | Speech playback volume from `0.0` to `1.0` |
 | `GRUB_PLAYBACK_DEVICE` | System default output | Optional sounddevice output device index for speech |
 
@@ -154,18 +160,17 @@ GRUB_STT_DEVICE=cpu GRUB_STT_COMPUTE_TYPE=int8 python main.py
 
 Automatic GPU memory management is not implemented. Moving STT to the CPU may increase transcription time.
 
-Silero runs on CPU by default, so it does not claim GPU memory. Its synthesis work runs in the request worker, and speech playback uses its own output stream. The selected microphone and speech output device are independent.
+Supertonic synthesis runs on CPU and leaves GPU memory for Gemma and faster-whisper. TTS synthesis runs in the request worker, and playback remains on the existing interruptible audio stream. `--tts-device` accepts only `cpu` for compatibility with the current launch configuration.
 
-### Try the Silero voices
+### Test the Russian-English phrase
 
-Run the standalone audition tool (no Ollama, Whisper, or microphone is needed):
+This standalone audition needs no Ollama, Whisper, or microphone. It downloads the model on first use, synthesizes and plays the phrase, and prints synthesis time, audio duration, and RTF (synthesis seconds divided by generated audio seconds):
 
 ```bash
-python tts_test.py --voice aidar
-python tts_test.py --voice eugene --text "Проверка русского голоса и произношения." --volume 0.8
+python tts_test.py --voice M1 --compare-languages
 ```
 
-Omit `--text` to enter an arbitrary phrase interactively. The tool reports model load time, synthesis time, and generated audio duration. Use it to compare the five available voices.
+The test synthesizes the same Russian-English technical phrase twice (`lang=na`, then `lang=ru`) and plays both clips so you can compare English words, the IP address, port, and `Python 3.12`. The program measures duration and RTF, but pronunciation quality must be judged by listening on your machine. To test one mode, use `python tts_test.py --voice M1 --language ru` (or `na` / `en`).
 
 ## Tests and syntax check
 
@@ -174,7 +179,7 @@ python -m compileall -q main.py grub
 python -m unittest discover -s tests -v
 ```
 
-Unit tests cover tool registration, schema validation, permission denials, handler failures, native Ollama message formatting, normal replies, sequential tool calls, tool limits, SmartLED protocol handling with fake sockets, and final-only TTS behavior. They use fake LLM responses and do not test physical devices, real Silero inference, or a live network scan.
+Unit tests cover tool registration, schema validation, permission denials, handler failures, native Ollama message formatting, normal replies, sequential tool calls, tool limits, SmartLED protocol handling with fake sockets, and Supertonic API behavior with stubs. They do not test physical devices, real TTS model inference/audio quality, or a live network scan.
 
 ## Project structure
 
@@ -221,7 +226,7 @@ grub-agent/
 - faster-whisper / CTranslate2 — local speech recognition.
 - Ollama HTTP API — local LLM chat.
 - `jsonschema` — validation of model-generated tool arguments.
-- Silero TTS / PyTorch (optional) — local Russian speech synthesis.
+- Supertonic 3 / ONNX Runtime (optional) — local CPU speech synthesis.
 - pynput — F8 push-to-talk when supported by the desktop session.
 
 ## Roadmap
