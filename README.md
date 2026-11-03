@@ -23,16 +23,18 @@ A local voice assistant for Linux. Grub captures speech from a microphone, trans
 - F8 can interrupt spoken playback and start a new push-to-talk recording.
 - If Supertonic, its model, or an output device is unavailable, text replies continue to work.
 - Native Ollama tool calling with JSON Schema validation and an explicit registry/executor.
-- Three read-only tools: system information, integer addition, and SmartLED discovery on `192.168.0.0/24`.
-- `write` and `restricted` tools are denied by default.
+- Eight core tools: system information, integer addition, SmartLED discovery, static RGB, rainbow, Music, Spectrum, and audio-mode stop. Four fact-memory tools are registered when ChromaDB initializes.
+- `restricted` tools are denied; write permissions are denied except for the explicitly allowlisted SmartLED mode tools.
 - Tool execution is sequential, with limits of five tool rounds and eight tool calls per request.
 - No shell-command or file-operation tool is registered.
+- Optional persistent user-fact memory uses ChromaDB and local Ollama embeddings; it stores short facts, not conversation transcripts.
 
 ## Requirements
 
 - Linux Mint and Python 3.10 or newer (developed with Python 3.12).
 - Ollama and the `gemma4:12b` model.
 - `jsonschema` for validating model-generated tool arguments.
+- `chromadb` for optional on-disk semantic memory.
 - A microphone accessible through PortAudio.
 - An NVIDIA GPU with compatible CUDA/cuDNN runtime libraries for GPU-based `faster-whisper` inference.
 - Internet access for the first Whisper model download. Transcription runs locally after the model is cached.
@@ -70,6 +72,30 @@ ollama list
 
 Run `ollama pull` only if the model has not already been downloaded. On its first run, `faster-whisper` downloads the `small` model and stores it in its local cache.
 
+### Persistent fact memory
+
+Grub can save stable facts the user shares about possessions, ongoing projects, and lasting preferences, then retrieve relevant facts by meaning in a later turn or session. It does not store full conversation transcripts. Sensitive information (such as passwords, secrets, health, or financial details) is not saved unless explicitly requested. You can ask what Grub remembers or ask it to forget a fact.
+
+Memory uses ChromaDB's local `PersistentClient`, stored outside the repository at `~/.local/share/grub-agent/chroma` (or `$XDG_DATA_HOME/grub-agent/chroma`). The local Ollama embedding model defaults to `embeddinggemma`; install the Python package with `python -m pip install -r requirements.txt` and download the model once:
+
+```bash
+ollama pull embeddinggemma
+```
+
+Embedding requests use Ollama's local `/api/embed` endpoint, ask Ollama to run the embedding model on CPU (`num_gpu: 0`), and keep it loaded for ten minutes. This avoids taking VRAM from Gemma and faster-whisper. EmbeddingGemma requires Ollama 0.11.10 or newer. The first embedding request may take longer while Ollama loads the model. Once the model and Python package are present, memory works without internet access.
+
+Configuration:
+
+- `GRUB_MEMORY_PATH` — override the Chroma database directory.
+- `GRUB_EMBEDDING_MODEL` — override the Ollama embedding model name.
+- `GRUB_EMBEDDING_TIMEOUT` — embedding request timeout in seconds (default `20`).
+- `GRUB_MEMORY_MAX_DISTANCE` — cosine-distance cutoff for retrieval (default `0.55`; tune against your own facts and queries).
+- `GRUB_OLLAMA_URL` — Ollama base URL, shared with the chat client.
+
+The first version uses model-guided fact selection: Grub is instructed to save durable facts, but an LLM can occasionally miss a fact or classify it incorrectly. Confirm important facts by asking what it remembers. Saved Chroma documents and metadata are stored locally as ordinary files; they are not encrypted by Grub.
+
+Ask Grub to remember a durable fact naturally, then in a later session ask a related question. To review or remove facts, ask what it remembers or ask it to forget a specific item. Memory is optional: if Chroma cannot initialize, Grub continues without memory tools and prints a warning. If the embedding model is missing or Ollama is unavailable, the affected memory operation returns an error; ordinary chat remains available.
+
 ## Run
 
 From the project root:
@@ -94,11 +120,19 @@ When Grub reports that it is ready, you can minimize the terminal and use other 
 
 Tool calls are selected by the model through Ollama's native `/api/chat` `tools` field. Grub sends the tool schemas on each agent request, validates each argument object locally, checks permissions, and then invokes only the registered Python handler. The assistant's tool-call message and each `role: tool` result are kept in the conversation sent back to Ollama. Only the final answer is printed and optionally sent to TTS.
 
-The registry explicitly registers three read-only tools: `get_system_info`, `calculate_sum`, and `discover_smartled`. Tool definitions live with their handlers under `grub/tools/`; no files are imported automatically from that folder.
+The registry explicitly registers `get_system_info`, `calculate_sum`, `discover_smartled`, `smartled_set_static`, `smartled_set_rainbow`, `smartled_start_music`, `smartled_start_spectrum`, and `smartled_stop_audio_mode`. Tool definitions live with their handlers under `grub/tools/`; no files are imported automatically from that folder.
 
-`discover_smartled` checks only `192.168.0.1` through `192.168.0.254`, connects to TCP port `4210`, and sends only `HELP\n`. The model receives no arguments for this tool, so it cannot choose an address, port, command, or scan range. Each connection and response has a short timeout; with the defaults, the theoretical socket-wait budget for all 254 addresses is about 76 seconds, plus operating-system and loop overhead. A match stops the scan immediately. The result is kept in the current conversation only; Grub does not save the address to disk.
+`discover_smartled` checks only `192.168.0.1` through `192.168.0.254`, connects to TCP port `4210`, and sends only `HELP\n`. The model receives no arguments for this tool, so it cannot choose an address, port, command, or scan range. Each connection and response has a short timeout; with the defaults, the theoretical socket-wait budget for all 254 addresses is about 76 seconds, plus operating-system and loop overhead. A match stops the scan immediately. The discovered address is kept in the `SmartLEDTools` object for the lifetime of Grub and is not written to disk; a not-found scan clears the stored address.
 
-To test the feature manually, start Grub and ask “Граб, найди мою подсветку”. That request starts the real local network scan. The tool unit tests use fake sockets and never scan the network.
+`smartled_set_static` accepts integer `r`, `g`, and `b` channels in the range 0–255 (for example, red is `255, 0, 0`). The IP comes only from successful discovery; the model cannot provide an IP, port, or command. Grub sends `MODE STATIC r g b\n` through OpenBSD Netcat. `smartled_set_rainbow` accepts `interval` in milliseconds from 100 to 60000 and sends `MODE RAINBOW INTERVAL interval\n`.
+
+`smartled_start_music` and `smartled_start_spectrum` start long-running system-audio loopback capture and send changing RGB datagrams to the discovered device. They follow LEDClient's analysis defaults and wire format: a TCP `MODE DYNAMIC` request must receive `OK`; then Grub samples the default speaker at 48 kHz in 1024-frame blocks and sends 5-byte UDP frames (`sequence` as big-endian uint16 followed by RGB) to port 4211 at up to 30 FPS. Music scales a configurable base RGB color by RMS brightness. Spectrum uses an 8-band FFT from 40 Hz to 10.24 kHz to select hue and audio level to select brightness; stereo channels are analyzed separately before their spectral power is combined, avoiding cancellation of out-of-phase audio. The two modes are mutually exclusive. Say “останови светомузыку” or “останови спектрум” to call `smartled_stop_audio_mode`; stopping ends capture and UDP updates, while the controller may retain the last received color until another mode command.
+
+Music and Spectrum require the `SoundCard` dependency and a working PulseAudio server or PipeWire PulseAudio endpoint. Grub records the default speaker's loopback, not the microphone. The `write` executor allowlist names only the five SmartLED mode/start/stop tools; other write tools remain denied. Errors starting capture are returned as tool failures. No real device was contacted during implementation.
+
+To test discovery manually, start Grub and ask “Граб, найди мою подсветку”; that starts the real local network scan. To request a write tool, ask “Теперь установи статический режим красного цвета” or “Включи режим радуги с интервалом 1000”. This sends a real device command; the automated tests use mocked subprocess calls and never connect to or control a device. Grub does not expose LEDClient's traffic-light command as a tool yet.
+
+For loopback modes, first play audio on the default system output, then ask “включи светомузыку” or “включи спектрум”. Grub will capture that output and stream UDP frames until you say “останови светомузыку” or “останови спектрум”. These commands operate the actual controller. The new continuous audio modes have not been exercised against physical audio devices or a SmartLED controller.
 
 The start tone is played before audio capture so it is not sent to Whisper. Start speaking after the tone. Sound output uses the system's default playback device independently of the selected microphone.
 
@@ -179,7 +213,7 @@ python -m compileall -q main.py grub
 python -m unittest discover -s tests -v
 ```
 
-Unit tests cover tool registration, schema validation, permission denials, handler failures, native Ollama message formatting, normal replies, sequential tool calls, tool limits, SmartLED protocol handling with fake sockets, and Supertonic API behavior with stubs. They do not test physical devices, real TTS model inference/audio quality, or a live network scan.
+Unit tests cover tool registration, schema validation, permission denials and per-tool write allowlisting, handler failures, native Ollama message formatting, normal replies, sequential tool calls, tool limits, SmartLED discovery with fake sockets, static and rainbow command handling with mocked subprocess, and Supertonic API behavior with stubs. The realtime Music/Spectrum capture and UDP worker are not covered by automated tests yet. Tests do not exercise physical devices, real TTS model inference/audio quality, or live network commands.
 
 ## Project structure
 
@@ -197,18 +231,23 @@ grub-agent/
 │   ├── audio.py
 │   ├── feedback.py
 │   ├── llm.py
+│   ├── memory.py
 │   ├── playback.py
 │   ├── stt.py
 │   ├── tools/
 │   │   ├── __init__.py
 │   │   ├── calculate_sum.py
 │   │   ├── discover_smartled.py
+│   │   ├── memory.py
+│   │   ├── smartled.py
+│   │   ├── smartled_audio.py
 │   │   └── system_info.py
 │   └── tts.py
 ├── tests/
 │   ├── test_agent.py
 │   ├── test_assistant.py
 │   ├── test_discover_smartled.py
+│   ├── test_smartled_static.py
 │   ├── test_ollama_tools.py
 │   └── test_tools.py
 ├── .gitignore
@@ -223,12 +262,14 @@ grub-agent/
 
 - Python — application language.
 - sounddevice and NumPy — microphone capture, in-memory audio buffers, and output playback.
+- SoundCard — default speaker loopback capture for SmartLED Music and Spectrum modes.
 - faster-whisper / CTranslate2 — local speech recognition.
-- Ollama HTTP API — local LLM chat.
+- Ollama HTTP API — local LLM chat and local embeddings.
+- ChromaDB (optional) — persistent vector storage for user facts.
 - `jsonschema` — validation of model-generated tool arguments.
 - Supertonic 3 / ONNX Runtime (optional) — local CPU speech synthesis.
 - pynput — F8 push-to-talk when supported by the desktop session.
 
 ## Roadmap
 
-Wake word, VAD, streaming STT, GUI, additional write/restricted tools, MCP, vector memory, and autostart are not implemented yet.
+Wake word, VAD, streaming STT, GUI, additional write/restricted tools, MCP, and autostart are not implemented yet.

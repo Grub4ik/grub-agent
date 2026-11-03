@@ -63,6 +63,32 @@ class ToolSystemTests(unittest.TestCase):
             self.assertFalse(result.success)
             self.assertIn("denied", result.error)
 
+    def test_one_named_write_tool_can_be_allowed_without_allowing_other_write_tools(self):
+        registry = ToolRegistry()
+        empty_schema = {"type": "object", "properties": {}, "additionalProperties": False}
+        registry.register(
+            "smartled_set_static",
+            "Set static mode.",
+            empty_schema,
+            lambda: {"status": "sent_unconfirmed"},
+            "write",
+        )
+        registry.register(
+            "other_write",
+            "Other write operation.",
+            empty_schema,
+            lambda: {"ok": True},
+            "write",
+        )
+        executor = ToolExecutor(registry, allowed_tool_permissions={"write": {"smartled_set_static"}})
+
+        allowed = executor.execute(ToolCall("smartled_set_static", {}))
+        denied = executor.execute(ToolCall("other_write", {}))
+
+        self.assertTrue(allowed.success)
+        self.assertFalse(denied.success)
+        self.assertIn("denied", denied.error)
+
     def test_system_info_returns_the_documented_fields(self):
         value = get_system_info()
         self.assertEqual(set(value), {"os", "version", "architecture"})

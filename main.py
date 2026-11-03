@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from functools import partial
 import os
 import sys
 
@@ -12,15 +13,29 @@ from grub.audio import AudioCapture, AudioError
 from grub.assistant import SYSTEM_PROMPT, VoiceAssistant
 from grub.feedback import FeedbackManager
 from grub.llm import OllamaClient, OllamaError
+from grub.memory import FactMemory, MemoryError
 from grub.playback import AudioPlayback
 from grub.stt import STTError, WhisperSTT, configure_cuda_library_path
 from grub.tools import (
     CALCULATE_SUM_SCHEMA,
     SMARTLED_DISCOVERY_SCHEMA,
+    SMARTLED_MUSIC_SCHEMA,
+    SMARTLED_RAINBOW_SCHEMA,
+    SMARTLED_SPECTRUM_SCHEMA,
+    SMARTLED_STATIC_SCHEMA,
+    SMARTLED_STOP_AUDIO_SCHEMA,
     SYSTEM_INFO_SCHEMA,
+    MEMORY_FORGET_SCHEMA,
+    MEMORY_LIST_SCHEMA,
+    MEMORY_SAVE_SCHEMA,
+    MEMORY_SEARCH_SCHEMA,
+    SmartLEDTools,
     calculate_sum,
-    discover_smartled,
+    forget_user_fact,
     get_system_info,
+    list_user_facts,
+    save_user_fact,
+    search_user_facts,
 )
 from grub.tts import (
     SUPPORTED_DEVICES,
@@ -128,6 +143,18 @@ def main() -> int:
             keep_alive=os.environ.get("GRUB_OLLAMA_KEEP_ALIVE", "10m"),
         )
         registry = ToolRegistry()
+        smartled = SmartLEDTools()
+        try:
+            memory = FactMemory(
+                path=os.environ.get("GRUB_MEMORY_PATH") or None,
+                ollama_url=os.environ.get("GRUB_OLLAMA_URL", "http://localhost:11434"),
+                embedding_model=os.environ.get("GRUB_EMBEDDING_MODEL", "embeddinggemma"),
+                timeout=float(os.environ.get("GRUB_EMBEDDING_TIMEOUT", "20")),
+                max_distance=float(os.environ.get("GRUB_MEMORY_MAX_DISTANCE", "0.55")),
+            )
+        except (MemoryError, OSError, ValueError) as exc:
+            memory = None
+            print(f"[MEMORY] Disabled; install/configure Chroma to enable saved facts: {exc}", file=sys.stderr)
         registry.register(
             name="get_system_info",
             description="Get the operating system name, release, and architecture.",
@@ -146,13 +173,104 @@ def main() -> int:
             name="discover_smartled",
             description="Discover a SmartLED device on the local network and return its IP address.",
             parameters=SMARTLED_DISCOVERY_SCHEMA,
-            handler=discover_smartled,
+            handler=smartled.discover,
             permission="read",
         )
+        registry.register(
+            name="smartled_set_static",
+            description=(
+                "Set the discovered SmartLED to static RGB color using integer channels r, g, b from 0 to 255. "
+                "Do not provide an IP, port, or command. "
+                "A successful Netcat send is not confirmation that the device applied it."
+            ),
+            parameters=SMARTLED_STATIC_SCHEMA,
+            handler=smartled.set_static,
+            permission="write",
+        )
+        registry.register(
+            name="smartled_set_rainbow",
+            description=(
+                "Set the discovered SmartLED to rainbow mode. Provide interval in milliseconds, an integer from 100 to 60000. "
+                "Do not provide an IP, port, or command. A successful send does not confirm device execution."
+            ),
+            parameters=SMARTLED_RAINBOW_SCHEMA,
+            handler=smartled.set_rainbow,
+            permission="write",
+        )
+        registry.register(
+            name="smartled_start_music",
+            description=(
+                "Start continuous SmartLED Music mode driven by system output audio. "
+                "Optional RGB base color, sensitivity, noise threshold, attack/release, brightness range, and normalization settings are supported."
+            ),
+            parameters=SMARTLED_MUSIC_SCHEMA,
+            handler=smartled.start_music,
+            permission="write",
+        )
+        registry.register(
+            name="smartled_start_spectrum",
+            description=(
+                "Start continuous SmartLED Spectrum mode driven by system output audio FFT. "
+                "Optional sensitivity (0-100) and noise threshold (0-30 percent) are supported."
+            ),
+            parameters=SMARTLED_SPECTRUM_SCHEMA,
+            handler=smartled.start_spectrum,
+            permission="write",
+        )
+        registry.register(
+            name="smartled_stop_audio_mode",
+            description="Stop the currently running SmartLED Music or Spectrum mode. Takes no arguments.",
+            parameters=SMARTLED_STOP_AUDIO_SCHEMA,
+            handler=smartled.stop_audio_mode,
+            permission="write",
+        )
+        if memory is not None:
+            registry.register(
+                name="memory_save_fact",
+                description=(
+                    "Save a concise, stable fact explicitly shared by the user about their possessions, projects, "
+                    "or preferences. Do not save temporary or sensitive information without an explicit request."
+                ),
+                parameters=MEMORY_SAVE_SCHEMA,
+                handler=partial(save_user_fact, memory),
+                permission="write",
+            )
+            registry.register(
+                name="memory_search_facts",
+                description="Search the user's saved facts by meaning when one may help answer the current request.",
+                parameters=MEMORY_SEARCH_SCHEMA,
+                handler=partial(search_user_facts, memory),
+                permission="read",
+            )
+            registry.register(
+                name="memory_list_facts",
+                description="List saved user facts when the user asks what Grub remembers.",
+                parameters=MEMORY_LIST_SCHEMA,
+                handler=partial(list_user_facts, memory),
+                permission="read",
+            )
+            registry.register(
+                name="memory_forget_fact",
+                description="Forget one saved fact only when the user explicitly asks, using its exact ID.",
+                parameters=MEMORY_FORGET_SCHEMA,
+                handler=partial(forget_user_fact, memory),
+                permission="write",
+            )
         agent = AgentCore(
             llm=llm,
             registry=registry,
-            executor=ToolExecutor(registry),
+            executor=ToolExecutor(
+                registry,
+                allowed_tool_permissions={"write": {
+                    "smartled_set_static",
+                    "smartled_set_rainbow",
+                    "smartled_start_music",
+                    "smartled_start_spectrum",
+                    "smartled_stop_audio_mode",
+                    "memory_save_fact",
+                    "memory_forget_fact",
+                }},
+            ),
             history_turns=_int_env("GRUB_HISTORY_TURNS", 10, 1, 50),
         )
         feedback = FeedbackManager(
@@ -169,6 +287,7 @@ def main() -> int:
         try:
             VoiceAssistant(audio, stt, llm, agent, feedback, tts, playback).run()
         finally:
+            smartled.close()
             llm.close()
         return 0
     except KeyboardInterrupt:

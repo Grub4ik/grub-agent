@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from jsonschema import Draft202012Validator
 
@@ -16,9 +16,14 @@ class ToolExecutor:
         self,
         registry: ToolRegistry,
         allowed_permissions: Iterable[str] = ("read",),
+        allowed_tool_permissions: Mapping[str, Iterable[str]] | None = None,
     ) -> None:
         self.registry = registry
         self.allowed_permissions = frozenset(allowed_permissions)
+        self.allowed_tool_permissions = {
+            permission: frozenset(tool_names)
+            for permission, tool_names in (allowed_tool_permissions or {}).items()
+        }
 
     def execute(self, call: ToolCall | dict[str, Any]) -> ToolResult:
         if isinstance(call, dict):
@@ -29,7 +34,8 @@ class ToolExecutor:
         definition = self.registry.get(call.name)
         if definition is None:
             return ToolResult(call.name, False, error="Tool not found.")
-        if definition.permission not in self.allowed_permissions:
+        tool_permissions = self.allowed_tool_permissions.get(definition.permission, frozenset())
+        if definition.permission not in self.allowed_permissions and call.name not in tool_permissions:
             return ToolResult(
                 call.name,
                 False,
