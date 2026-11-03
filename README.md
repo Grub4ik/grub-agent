@@ -23,12 +23,13 @@ A local voice assistant for Linux. Grub captures speech from a microphone, trans
 - F8 can interrupt spoken playback and start a new push-to-talk recording.
 - If Supertonic, its model, or an output device is unavailable, text replies continue to work.
 - Native Ollama tool calling with JSON Schema validation and an explicit registry/executor.
-- Nine core tools: system information, integer addition, SmartLED discovery, static RGB, rainbow, Music, Spectrum, audio-mode stop, and YouTube search/open. Four fact-memory tools are registered when ChromaDB initializes.
+- Ten core tools: system information, integer addition, SmartLED discovery, static RGB, rainbow, Music, Spectrum, audio-mode stop, YouTube search/open, and web search. Four fact-memory tools are registered when ChromaDB initializes.
 - `restricted` tools are denied; only explicitly allowlisted SmartLED, memory, and YouTube write tools can run.
 - Tool execution is sequential, with limits of five tool rounds and eight tool calls per request.
 - No shell-command or file-operation tool is registered.
 - Optional persistent user-fact memory uses ChromaDB and local Ollama embeddings; it stores short facts, not conversation transcripts.
 - `youtube_play_video` searches YouTube and opens the best title/artist match in the default browser.
+- `web_search` searches DuckDuckGo's HTML results page and returns a small set of source titles, snippets, and links; it needs internet access but no API key.
 
 ## Requirements
 
@@ -121,9 +122,11 @@ When Grub reports that it is ready, you can minimize the terminal and use other 
 
 Tool calls are selected by the model through Ollama's native `/api/chat` `tools` field. Grub sends the tool schemas on each agent request, validates each argument object locally, checks permissions, and then invokes only the registered Python handler. The assistant's tool-call message and each `role: tool` result are kept in the conversation sent back to Ollama. Only the final answer is printed and optionally sent to TTS.
 
-The registry explicitly registers `get_system_info`, `calculate_sum`, `discover_smartled`, `smartled_set_static`, `smartled_set_rainbow`, `smartled_start_music`, `smartled_start_spectrum`, `smartled_stop_audio_mode`, and `youtube_play_video`. Memory tools are additionally registered when ChromaDB initializes. Tool definitions live with their handlers under `grub/tools/`; no files are imported automatically from that folder.
+The registry explicitly registers `get_system_info`, `calculate_sum`, `discover_smartled`, `smartled_set_static`, `smartled_set_rainbow`, `smartled_start_music`, `smartled_start_spectrum`, `smartled_stop_audio_mode`, `youtube_play_video`, and `web_search`. Memory tools are additionally registered when ChromaDB initializes. Tool definitions live with their handlers under `grub/tools/`; no files are imported automatically from that folder.
 
 `youtube_play_video` uses `yt-dlp` to retrieve up to ten YouTube search candidates, then ranks them by title and artist/channel word matches (title matches carry more weight). It will not select a result based only on the artist if none of the requested words appear in the video title. It opens the best match using a fixed `youtube.com/watch` URL. Pass the exact title and artist when known. It passes search text only, disables config files and downloads, and never accepts a URL or ID from the model. No API key is needed. This relies on YouTube's public search behavior and may break if YouTube changes it; the video itself is not downloaded. The ranking is metadata-based, so ambiguous titles can still require a more specific query.
+
+`web_search` sends a query to DuckDuckGo's HTML search page using Python's standard library and returns up to five titles, snippets, and source links. It does not fetch full pages, execute JavaScript, download files, or require an API key. Search results are external, untrusted content; Grub is instructed to use them as evidence, never as instructions. The provider may rate-limit or change its page markup, and the feature requires internet access.
 
 `discover_smartled` checks only `192.168.0.1` through `192.168.0.254`, connects to TCP port `4210`, and sends only `HELP\n`. The model receives no arguments for this tool, so it cannot choose an address, port, command, or scan range. Each connection and response has a short timeout; with the defaults, the theoretical socket-wait budget for all 254 addresses is about 76 seconds, plus operating-system and loop overhead. A match stops the scan immediately. The discovered address is kept in the `SmartLEDTools` object for the lifetime of Grub and is not written to disk; a not-found scan clears the stored address.
 
@@ -135,7 +138,7 @@ Music and Spectrum require the `SoundCard` dependency and a working PulseAudio s
 
 To test discovery manually, start Grub and ask “Граб, найди мою подсветку”; that starts the real local network scan. To request a write tool, ask “Теперь установи статический режим красного цвета” or “Включи режим радуги с интервалом 1000”. This sends a real device command; the automated tests use mocked subprocess calls and never connect to or control a device. Grub does not expose LEDClient's traffic-light command as a tool yet.
 
-To try YouTube, ask “включи рикролл” or “открой песню Blood Moon от JFarrari”. Grub searches several results, prefers title matches and uses artist/channel metadata to break ties, then opens the best match; playback may depend on browser autoplay settings.
+To try web search, ask “что такое мьюдженикс?”; Grub should search for Mewgenics and summarize the returned sources. To try YouTube, ask “включи рикролл” or “открой песню Blood Moon от JFarrari”. Grub searches several results, prefers title matches and uses artist/channel metadata to break ties, then opens the best match; playback may depend on browser autoplay settings.
 
 For loopback modes, first play audio on the default system output, then ask “включи светомузыку” or “включи спектрум”. Grub will capture that output and stream UDP frames until you say “останови светомузыку” or “останови спектрум”. These commands operate the actual controller. The new continuous audio modes have not been exercised against physical audio devices or a SmartLED controller.
 

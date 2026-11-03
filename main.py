@@ -26,6 +26,7 @@ from grub.tools import (
     SMARTLED_STOP_AUDIO_SCHEMA,
     SYSTEM_INFO_SCHEMA,
     YOUTUBE_PLAY_SCHEMA,
+    WEB_SEARCH_SCHEMA,
     MEMORY_FORGET_SCHEMA,
     MEMORY_LIST_SCHEMA,
     MEMORY_SAVE_SCHEMA,
@@ -38,6 +39,7 @@ from grub.tools import (
     save_user_fact,
     search_user_facts,
     play_youtube_video,
+    web_search,
 )
 from grub.tts import (
     SUPPORTED_DEVICES,
@@ -236,6 +238,16 @@ def main() -> int:
             parameters=YOUTUBE_PLAY_SCHEMA,
             handler=play_youtube_video,
             permission="write",
+        )
+        registry.register(
+            name="web_search",
+            description=(
+                "Search the public web for current, obscure, or user-requested information. "
+                "Return a few source titles, snippets, and URLs. Takes a concise search query."
+            ),
+            parameters=WEB_SEARCH_SCHEMA,
+            handler=web_search,
+            permission="read",
         )
         if memory is not None:
             registry.register(
