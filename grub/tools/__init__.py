@@ -26,6 +26,7 @@ from .smartled import (
     SmartLEDCommandError,
     SmartLEDTools,
 )
+from .youtube import YOUTUBE_PLAY_SCHEMA, play_youtube_video
 
 __all__ = [
     "CALCULATE_SUM_SCHEMA",
@@ -36,6 +37,7 @@ __all__ = [
     "SMARTLED_STATIC_SCHEMA",
     "SMARTLED_STOP_AUDIO_SCHEMA",
     "SYSTEM_INFO_SCHEMA",
+    "YOUTUBE_PLAY_SCHEMA",
     "MEMORY_FORGET_SCHEMA",
     "MEMORY_LIST_SCHEMA",
     "MEMORY_SAVE_SCHEMA",
@@ -46,6 +48,7 @@ __all__ = [
     "calculate_sum",
     "discover_smartled",
     "get_system_info",
+    "play_youtube_video",
     "forget_user_fact",
     "list_user_facts",
     "save_user_fact",

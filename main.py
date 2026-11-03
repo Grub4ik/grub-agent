@@ -25,6 +25,7 @@ from grub.tools import (
     SMARTLED_STATIC_SCHEMA,
     SMARTLED_STOP_AUDIO_SCHEMA,
     SYSTEM_INFO_SCHEMA,
+    YOUTUBE_PLAY_SCHEMA,
     MEMORY_FORGET_SCHEMA,
     MEMORY_LIST_SCHEMA,
     MEMORY_SAVE_SCHEMA,
@@ -36,6 +37,7 @@ from grub.tools import (
     list_user_facts,
     save_user_fact,
     search_user_facts,
+    play_youtube_video,
 )
 from grub.tts import (
     SUPPORTED_DEVICES,
@@ -224,6 +226,17 @@ def main() -> int:
             handler=smartled.stop_audio_mode,
             permission="write",
         )
+        registry.register(
+            name="youtube_play_video",
+            description=(
+                "Search YouTube for a video or song and open the best title/artist match in the default browser. "
+                "Pass the exact title and artist when known, without request wording; never provide a URL or video ID. "
+                "This does not download the video."
+            ),
+            parameters=YOUTUBE_PLAY_SCHEMA,
+            handler=play_youtube_video,
+            permission="write",
+        )
         if memory is not None:
             registry.register(
                 name="memory_save_fact",
@@ -267,6 +280,7 @@ def main() -> int:
                     "smartled_start_music",
                     "smartled_start_spectrum",
                     "smartled_stop_audio_mode",
+                    "youtube_play_video",
                     "memory_save_fact",
                     "memory_forget_fact",
                 }},

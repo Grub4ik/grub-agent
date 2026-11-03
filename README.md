@@ -23,11 +23,12 @@ A local voice assistant for Linux. Grub captures speech from a microphone, trans
 - F8 can interrupt spoken playback and start a new push-to-talk recording.
 - If Supertonic, its model, or an output device is unavailable, text replies continue to work.
 - Native Ollama tool calling with JSON Schema validation and an explicit registry/executor.
-- Eight core tools: system information, integer addition, SmartLED discovery, static RGB, rainbow, Music, Spectrum, and audio-mode stop. Four fact-memory tools are registered when ChromaDB initializes.
-- `restricted` tools are denied; write permissions are denied except for the explicitly allowlisted SmartLED mode tools.
+- Nine core tools: system information, integer addition, SmartLED discovery, static RGB, rainbow, Music, Spectrum, audio-mode stop, and YouTube search/open. Four fact-memory tools are registered when ChromaDB initializes.
+- `restricted` tools are denied; only explicitly allowlisted SmartLED, memory, and YouTube write tools can run.
 - Tool execution is sequential, with limits of five tool rounds and eight tool calls per request.
 - No shell-command or file-operation tool is registered.
 - Optional persistent user-fact memory uses ChromaDB and local Ollama embeddings; it stores short facts, not conversation transcripts.
+- `youtube_play_video` searches YouTube and opens the best title/artist match in the default browser.
 
 ## Requirements
 
@@ -120,7 +121,9 @@ When Grub reports that it is ready, you can minimize the terminal and use other 
 
 Tool calls are selected by the model through Ollama's native `/api/chat` `tools` field. Grub sends the tool schemas on each agent request, validates each argument object locally, checks permissions, and then invokes only the registered Python handler. The assistant's tool-call message and each `role: tool` result are kept in the conversation sent back to Ollama. Only the final answer is printed and optionally sent to TTS.
 
-The registry explicitly registers `get_system_info`, `calculate_sum`, `discover_smartled`, `smartled_set_static`, `smartled_set_rainbow`, `smartled_start_music`, `smartled_start_spectrum`, and `smartled_stop_audio_mode`. Tool definitions live with their handlers under `grub/tools/`; no files are imported automatically from that folder.
+The registry explicitly registers `get_system_info`, `calculate_sum`, `discover_smartled`, `smartled_set_static`, `smartled_set_rainbow`, `smartled_start_music`, `smartled_start_spectrum`, `smartled_stop_audio_mode`, and `youtube_play_video`. Memory tools are additionally registered when ChromaDB initializes. Tool definitions live with their handlers under `grub/tools/`; no files are imported automatically from that folder.
+
+`youtube_play_video` uses `yt-dlp` to retrieve up to ten YouTube search candidates, then ranks them by title and artist/channel word matches (title matches carry more weight). It will not select a result based only on the artist if none of the requested words appear in the video title. It opens the best match using a fixed `youtube.com/watch` URL. Pass the exact title and artist when known. It passes search text only, disables config files and downloads, and never accepts a URL or ID from the model. No API key is needed. This relies on YouTube's public search behavior and may break if YouTube changes it; the video itself is not downloaded. The ranking is metadata-based, so ambiguous titles can still require a more specific query.
 
 `discover_smartled` checks only `192.168.0.1` through `192.168.0.254`, connects to TCP port `4210`, and sends only `HELP\n`. The model receives no arguments for this tool, so it cannot choose an address, port, command, or scan range. Each connection and response has a short timeout; with the defaults, the theoretical socket-wait budget for all 254 addresses is about 76 seconds, plus operating-system and loop overhead. A match stops the scan immediately. The discovered address is kept in the `SmartLEDTools` object for the lifetime of Grub and is not written to disk; a not-found scan clears the stored address.
 
@@ -128,9 +131,11 @@ The registry explicitly registers `get_system_info`, `calculate_sum`, `discover_
 
 `smartled_start_music` and `smartled_start_spectrum` start long-running system-audio loopback capture and send changing RGB datagrams to the discovered device. They follow LEDClient's analysis defaults and wire format: a TCP `MODE DYNAMIC` request must receive `OK`; then Grub samples the default speaker at 48 kHz in 1024-frame blocks and sends 5-byte UDP frames (`sequence` as big-endian uint16 followed by RGB) to port 4211 at up to 30 FPS. Music scales a configurable base RGB color by RMS brightness. Spectrum uses an 8-band FFT from 40 Hz to 10.24 kHz to select hue and audio level to select brightness; stereo channels are analyzed separately before their spectral power is combined, avoiding cancellation of out-of-phase audio. The two modes are mutually exclusive. Say “останови светомузыку” or “останови спектрум” to call `smartled_stop_audio_mode`; stopping ends capture and UDP updates, while the controller may retain the last received color until another mode command.
 
-Music and Spectrum require the `SoundCard` dependency and a working PulseAudio server or PipeWire PulseAudio endpoint. Grub records the default speaker's loopback, not the microphone. The `write` executor allowlist names only the five SmartLED mode/start/stop tools; other write tools remain denied. Errors starting capture are returned as tool failures. No real device was contacted during implementation.
+Music and Spectrum require the `SoundCard` dependency and a working PulseAudio server or PipeWire PulseAudio endpoint. Grub records the default speaker's loopback, not the microphone. Only explicitly allowlisted SmartLED, YouTube, and memory write tools can run; other write tools remain denied. Errors starting capture are returned as tool failures. No real device was contacted during implementation.
 
 To test discovery manually, start Grub and ask “Граб, найди мою подсветку”; that starts the real local network scan. To request a write tool, ask “Теперь установи статический режим красного цвета” or “Включи режим радуги с интервалом 1000”. This sends a real device command; the automated tests use mocked subprocess calls and never connect to or control a device. Grub does not expose LEDClient's traffic-light command as a tool yet.
+
+To try YouTube, ask “включи рикролл” or “открой песню Blood Moon от JFarrari”. Grub searches several results, prefers title matches and uses artist/channel metadata to break ties, then opens the best match; playback may depend on browser autoplay settings.
 
 For loopback modes, first play audio on the default system output, then ask “включи светомузыку” or “включи спектрум”. Grub will capture that output and stream UDP frames until you say “останови светомузыку” or “останови спектрум”. These commands operate the actual controller. The new continuous audio modes have not been exercised against physical audio devices or a SmartLED controller.
 
@@ -241,7 +246,8 @@ grub-agent/
 │   │   ├── memory.py
 │   │   ├── smartled.py
 │   │   ├── smartled_audio.py
-│   │   └── system_info.py
+│   │   ├── system_info.py
+│   │   └── youtube.py
 │   └── tts.py
 ├── tests/
 │   ├── test_agent.py
