@@ -17,7 +17,10 @@ WEB_SEARCH_SCHEMA: dict[str, Any] = {
             "type": "string",
             "minLength": 2,
             "maxLength": 200,
-            "description": "A concise web search query.",
+            "description": (
+                "Search terms that preserve the person's/product's/game's exact name as spoken or written by the user. "
+                "Do not replace a similar-sounding name with a better-known one. Include relevant topic words."
+            ),
         }
     },
     "required": ["query"],
@@ -27,8 +30,14 @@ WEB_SEARCH_SCHEMA: dict[str, Any] = {
 _SEARCH_URL = "https://html.duckduckgo.com/html/"
 _TIMEOUT_SECONDS = 12
 _MAX_RESPONSE_BYTES = 1_000_000
-_MAX_RESULTS = 5
+_FETCH_RESULTS = 12
+_MAX_RESULTS = 6
 _MAX_FIELD_LENGTH = 1_200
+_QUERY_STOP_WORDS = {
+    "кто", "что", "такой", "такая", "такое", "это", "про", "расскажи", "найди", "информация",
+    "известные", "песни", "песня", "трек", "треков", "пожалуйста", "the", "a", "an", "who", "is",
+    "what", "about", "tell", "me", "known", "songs", "song", "music", "information",
+}
 
 
 class _DuckDuckGoHTMLParser(HTMLParser):
@@ -97,15 +106,39 @@ def _unwrap_result_url(raw_url: str) -> str | None:
     return raw_url
 
 
+def _tokens(text: str) -> set[str]:
+    """Return normalized query/content words, excluding common request filler."""
+    return {
+        token
+        for token in re.findall(r"[\w]+", text.casefold())
+        if len(token) > 1 and token not in _QUERY_STOP_WORDS
+    }
+
+
+def _rank_results(query: str, results: list[dict[str, str]]) -> list[dict[str, Any]]:
+    """Move results containing the user's exact terms above loosely related results."""
+    query_tokens = _tokens(query)
+    ranked: list[tuple[float, int, dict[str, Any]]] = []
+    for position, item in enumerate(results):
+        title_tokens = _tokens(item["title"])
+        snippet_tokens = _tokens(item["snippet"])
+        title_matches = sorted(query_tokens & title_tokens)
+        snippet_matches = sorted(query_tokens & snippet_tokens)
+        score = 5 * len(title_matches) + 2 * len(snippet_matches) - position * 0.05
+        ranked.append((score, position, {**item, "matched_query_terms": title_matches + snippet_matches}))
+    ranked.sort(key=lambda entry: (-entry[0], entry[1]))
+    return [item for _score, _position, item in ranked]
+
+
 def web_search(query: str) -> dict[str, Any]:
-    """Search the public web and return up to five titles, snippets, and source URLs."""
+    """Search the public web and return relevant titles, snippets, and source URLs."""
     query = query.strip()
     if len(query) < 2:
         raise ValueError("Search query must contain at least 2 characters.")
     if len(query) > 200:
         raise ValueError("Search query cannot exceed 200 characters.")
 
-    url = f"{_SEARCH_URL}?{urlencode({'q': query, 'kl': 'ru-ru'})}"
+    url = f"{_SEARCH_URL}?{urlencode({'q': query, 'kl': 'ru-ru', 's': '0'})}"
     request = Request(
         url,
         headers={
@@ -138,7 +171,7 @@ def web_search(query: str) -> dict[str, Any]:
             "url": result_url,
             "snippet": item["snippet"],
         })
-        if len(results) >= _MAX_RESULTS:
+        if len(results) >= _FETCH_RESULTS:
             break
 
     if not results:
@@ -146,4 +179,8 @@ def web_search(query: str) -> dict[str, Any]:
             raise RuntimeError("DuckDuckGo blocked this automated search; try again later.")
         raise RuntimeError("Web search returned no parseable results.")
 
-    return {"query": query, "provider": "DuckDuckGo", "results": results}
+    return {
+        "query": query,
+        "provider": "DuckDuckGo",
+        "results": _rank_results(query, results)[:_MAX_RESULTS],
+    }

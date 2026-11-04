@@ -18,6 +18,7 @@ from grub.playback import AudioPlayback
 from grub.stt import STTError, WhisperSTT, configure_cuda_library_path
 from grub.tools import (
     CALCULATE_SUM_SCHEMA,
+    CURRENT_TIME_SCHEMA,
     SMARTLED_DISCOVERY_SCHEMA,
     SMARTLED_MUSIC_SCHEMA,
     SMARTLED_RAINBOW_SCHEMA,
@@ -33,6 +34,7 @@ from grub.tools import (
     MEMORY_SEARCH_SCHEMA,
     SmartLEDTools,
     calculate_sum,
+    get_current_time,
     forget_user_fact,
     get_system_info,
     list_user_facts,
@@ -231,7 +233,7 @@ def main() -> int:
         registry.register(
             name="youtube_play_video",
             description=(
-                "Search YouTube for a video or song and open the best title/artist match in the default browser. "
+                "Find a matching YouTube video or song with yt-dlp using the configured HTTPS proxy, then use public web search as a fallback. "
                 "Pass the exact title and artist when known, without request wording; never provide a URL or video ID. "
                 "This does not download the video."
             ),
@@ -243,10 +245,19 @@ def main() -> int:
             name="web_search",
             description=(
                 "Search the public web for current, obscure, or user-requested information. "
-                "Return a few source titles, snippets, and URLs. Takes a concise search query."
+                "Return relevant source titles, snippets, and URLs. Preserve exact names from the user; never autocorrect "
+                "to a similar, more famous person. For a transliterated name, include both the spoken spelling and its "
+                "likely Latin spelling in the query. Add the requested topic, such as songs or discography."
             ),
             parameters=WEB_SEARCH_SCHEMA,
             handler=web_search,
+            permission="read",
+        )
+        registry.register(
+            name="get_current_time",
+            description="Get the current local date and time, including the system timezone. Takes no arguments.",
+            parameters=CURRENT_TIME_SCHEMA,
+            handler=get_current_time,
             permission="read",
         )
         if memory is not None:

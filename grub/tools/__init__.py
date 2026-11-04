@@ -1,6 +1,7 @@
 """Tool implementations registered explicitly by the Grub entry point."""
 
 from .calculate_sum import CALCULATE_SUM_SCHEMA, calculate_sum
+from .current_time import CURRENT_TIME_SCHEMA, get_current_time
 from .discover_smartled import (
     SMARTLED_DISCOVERY_SCHEMA,
     SmartLEDDiscoveryError,
@@ -31,6 +32,7 @@ from .web_search import WEB_SEARCH_SCHEMA, web_search
 
 __all__ = [
     "CALCULATE_SUM_SCHEMA",
+    "CURRENT_TIME_SCHEMA",
     "SMARTLED_DISCOVERY_SCHEMA",
     "SMARTLED_MUSIC_SCHEMA",
     "SMARTLED_RAINBOW_SCHEMA",
@@ -48,6 +50,7 @@ __all__ = [
     "SmartLEDDiscoveryError",
     "SmartLEDTools",
     "calculate_sum",
+    "get_current_time",
     "discover_smartled",
     "get_system_info",
     "play_youtube_video",
